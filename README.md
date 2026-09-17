@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Supawatch
 
-## Getting Started
+Movie and TV discovery built with Next.js 16 and TMDB.
 
-First, run the development server:
+## Local development
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Install dependencies with `npm ci`. Set these values in `.env.local`:
+
+```dotenv
+TMDB_READ_ACCESS_TOKEN=your_tmdb_api_read_access_token
+NEXT_PUBLIC_BASE_URL=https://your-production-domain.example
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Use `http://localhost:3000` as the base URL for local development. `TMDB_API_KEY` also accepts a v3 API key (sent as `api_key`) or read access token (sent as a Bearer header). The legacy `NEXT_PUBLIC_TMDB_API_KEY` is supported for existing deployments; migrate it to the server-only name above. Never put credentials in client fetch URLs.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Run `npm run dev`, or `npm run build && npm start` to check production behavior. Configure the canonical production URL in the hosting environment before building.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## TMDB requests and caching
 
-## Learn More
+All server requests go through `src/lib/tmdb.ts`. It canonicalizes query strings, shares concurrent identical requests, limits concurrency to eight per process, and caps pending requests at 100. Next's persistent fetch cache handles reuse between requests and deployments where supported by the host. In-memory concurrency limits are per process, not a distributed account-wide rate limiter.
 
-To learn more about Next.js, take a look at the following resources:
+Requests have a five-second timeout and at most one retry for connection failures, 429, or selected 5xx responses. Retry-After delays above two seconds fail promptly instead of retrying sooner than TMDB requested. Invalid input and missing titles are not retried. Upstream authentication failures become service errors, not visitor authentication errors.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Detail pages and preview APIs share one `append_to_response=videos,credits,images` request, cached for one hour. An absent logo gets one unfiltered image lookup; absent English trailers for a non-English title get one original-language lookup. Those fallback resources and watch providers are cached for a day. Metadata and page rendering share a React request cache. Movie, TV, and person pages are generated on first visit and revalidate hourly, so repeat views can reuse the rendered page. Recommendations are optional and cannot turn a valid title into a 404.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Successful API responses use shared HTTP caching. Failed and partially failed discovery responses use `no-store`; the browser cache also respects it. The browser cache holds up to 200 URLs, deduplicates query parameter order, and removes failed requests. Region stays in provider/discovery request URLs so availability cannot leak between countries.
 
-## Deploy on Vercel
+## Playback and routing
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Only valid YouTube trailers and teasers are selected, with official videos and preferred languages ranked first. Detail dialogs load the YouTube IFrame API on demand, try the next candidate on video-specific errors, retain manual playback controls when autoplay is blocked, and offer an external YouTube link. TMDB metadata cannot guarantee a video is embeddable in every region.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Background trailers load only in the active desktop/mobile layout and pause by unmounting when the document is hidden or reduced motion is requested. The backdrop remains the fallback. Embeds send the site origin and use `strict-origin-when-cross-origin`.
+
+Movie, TV, and person routes reserve not-found behavior for invalid IDs and confirmed TMDB 404s. Temporary failures reach the retryable error boundary, allowing Next to retain a previously successful page during failed revalidation. Next can return HTTP 200 when a not-found or error boundary is discovered after streaming has begun; check rendered error/noindex behavior as well as HTTP status.
+
+The sitemap revalidates daily, excludes search/private-library pages, and omits invented modification timestamps. Search pages use `noindex,follow`. Detail pages have individual canonical URLs, social metadata, and structured data.
+
+## Validation
+
+```sh
+npm run test:tmdb
+npm run test:core
+npm run test:discovery
+npm run test:browse
+npm run test:episodes
+npm run test:history
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+TMDB regression tests use mocked upstream responses to cover retries, rate limits, request deduplication, authentication, language fallbacks, partial failure, and cache eviction without spending API requests.
+
+Implementation references: [TMDB authentication](https://developer.themoviedb.org/docs/authentication-application), [append to response](https://developer.themoviedb.org/docs/append-to-response), [rate limits](https://developer.themoviedb.org/docs/rate-limiting), [Next fetch caching](https://nextjs.org/docs/app/api-reference/functions/fetch), and [YouTube player API](https://developers.google.com/youtube/iframe_api_reference).

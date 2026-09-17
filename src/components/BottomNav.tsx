@@ -2,14 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Clapperboard, Tv, Flame, Search } from "lucide-react";
+import { Home, Clapperboard, Bookmark, Library, Search, Tv } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { name: "Home", href: "/", icon: Home },
-  { name: "Movies", href: "/movie", icon: Clapperboard },
-  { name: "TV", href: "/tv", icon: Tv },
-  { name: "Popular", href: "/popular", icon: Flame },
+  { name: "Films", href: "/films", icon: Clapperboard },
+  { name: "Series", href: "/series", icon: Tv },
+  { name: "Collections", href: "/collections", icon: Library },
+  { name: "My List", href: "/watchlist", icon: Bookmark },
   { name: "Search", href: "/search", icon: Search },
 ];
 
@@ -21,7 +22,8 @@ export default function BottomNav() {
   return (
     <nav
       aria-label="Mobile navigation"
-      className="fixed inset-x-0 bottom-0 z-50 md:hidden"
+      style={{ viewTransitionName: "persistent-bottom-nav" }}
+      className="fixed inset-x-0 bottom-0 z-50 lg:hidden"
     >
       {/* Gradient bleed above bar */}
       <div
@@ -46,11 +48,12 @@ export default function BottomNav() {
               <Link
                 key={item.name}
                 href={item.href}
+                aria-current={active ? "page" : undefined}
                 className={cn(
                   "relative flex flex-1 flex-col items-center gap-1.5 pb-1 pt-3 transition-colors duration-150 active:scale-95",
                   active
                     ? "text-white"
-                    : "text-neutral-600 hover:text-neutral-400",
+                    : "text-neutral-400 hover:text-neutral-200",
                 )}
               >
                 {/* Active: white top stripe */}
@@ -64,7 +67,7 @@ export default function BottomNav() {
                 <Icon
                   className={cn(
                     "h-[20px] w-[20px] transition-all duration-150",
-                    active ? "text-white" : "text-neutral-600",
+                    active ? "text-white" : "text-neutral-400",
                   )}
                   strokeWidth={active ? 2.2 : 1.7}
                 />
@@ -72,7 +75,7 @@ export default function BottomNav() {
                 <span
                   className={cn(
                     "font-manrope text-[8.5px] uppercase tracking-[0.12em] transition-colors duration-150",
-                    active ? "text-white" : "text-neutral-700",
+                    active ? "text-white" : "text-neutral-400",
                   )}
                 >
                   {item.name}

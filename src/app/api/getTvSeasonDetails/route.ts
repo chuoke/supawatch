@@ -9,6 +9,7 @@ interface RawEpisode {
   air_date: string | null;
   runtime: number | null;
   vote_average: number;
+  vote_count?: number;
 }
 
 export async function GET(request: Request) {
@@ -32,6 +33,7 @@ export async function GET(request: Request) {
       air_date: e.air_date,
       runtime: e.runtime,
       vote_average: e.vote_average,
+      vote_count: e.vote_count,
     }));
 
     return jsonOk({ episodes }, 200, { sMaxAge: CACHE.hour });

@@ -66,7 +66,7 @@ export default function GenrePicker({
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={handleOpenChange}>
       <PopoverPrimitive.Trigger
-        aria-label="Browse movies by genre"
+        aria-label="Browse films by genre"
         className="group flex w-fit items-baseline justify-start gap-2.5 outline-none"
         style={{ textShadow: "0 1px 16px rgba(0,0,0,0.95)" }}
       >

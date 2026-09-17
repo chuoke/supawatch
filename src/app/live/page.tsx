@@ -7,11 +7,11 @@ import LiveClient from "./LiveClient";
 
 export const metadata: Metadata = {
   title: "Live Channels",
-  description: "Watch curated live channels by region on Supawatch, including news, movies, sports, entertainment, kids, music, and more.",
+  description: "Watch curated live channels by region on Supawatch, including news, films, sports, entertainment, kids, music, and more.",
   alternates: { canonical: "/live" },
   openGraph: {
     title: "Live Channels | Supawatch",
-    description: "Watch curated live channels by region on Supawatch, including news, movies, sports, entertainment, kids, music, and more.",
+    description: "Watch curated live channels by region on Supawatch, including news, films, sports, entertainment, kids, music, and more.",
     url: "/live",
   },
 };

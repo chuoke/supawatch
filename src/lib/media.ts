@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { CACHE, tmdbFetch, type ParamValue } from "@/lib/tmdb";
+import { CACHE, tmdbFetch, TmdbError } from "@/lib/tmdb";
 
 export type MediaType = "movie" | "tv";
 
@@ -33,66 +33,6 @@ export type WatchProvider = {
   logo_path: string;
 };
 
-const DEFAULT_COUNTRY_BY_LANGUAGE: Record<string, string> = {
-  ar: "SA",
-  da: "DK",
-  de: "DE",
-  es: "ES",
-  fr: "FR",
-  hi: "IN",
-  id: "ID",
-  it: "IT",
-  ja: "JP",
-  kn: "IN",
-  ko: "KR",
-  ml: "IN",
-  no: "NO",
-  pt: "BR",
-  ru: "RU",
-  sv: "SE",
-  ta: "IN",
-  te: "IN",
-  th: "TH",
-  tr: "TR",
-  zh: "CN",
-};
-
-const PROVIDER_REGION_FALLBACKS = ["US", "GB", "CA", "AU", "IN"];
-
-function unique(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
-}
-
-function firstCountry(countries: unknown): string | null {
-  if (!Array.isArray(countries)) return null;
-  return countries.find((country) => typeof country === "string" && /^[A-Z]{2}$/.test(country)) ?? null;
-}
-
-function productionCountries(countries: unknown): string[] {
-  if (!Array.isArray(countries)) return [];
-  return countries
-    .map((country) => {
-      if (typeof country === "string") return country;
-      if (country && typeof country === "object" && "iso_3166_1" in country) {
-        const code = (country as { iso_3166_1?: unknown }).iso_3166_1;
-        return typeof code === "string" ? code : null;
-      }
-      return null;
-    })
-    .filter((country): country is string => Boolean(country && /^[A-Z]{2}$/.test(country)));
-}
-
-function videoLanguageTags(language: string | null | undefined, countries: string[] = []): string[] {
-  const lang = language?.toLowerCase();
-  if (!lang || lang === "en" || !/^[a-z]{2,3}$/.test(lang)) return [];
-
-  const preferredCountry = firstCountry(countries) ?? DEFAULT_COUNTRY_BY_LANGUAGE[lang];
-  return unique([
-    preferredCountry ? `${lang}-${preferredCountry}` : "",
-    lang,
-  ]);
-}
-
 function videoScore(video: TmdbVideo, preferredLanguage?: string | null): number {
   const type = video.type ?? "";
   const language = video.iso_639_1 ?? null;
@@ -116,14 +56,18 @@ function videoScore(video: TmdbVideo, preferredLanguage?: string | null): number
   return score;
 }
 
+export function rankTrailerKeys(videos: TmdbVideo[] = [], preferredLanguage?: string | null): string[] {
+  return [...new Set(videos
+    .filter(video => video.site === "YouTube" && /^[a-zA-Z0-9_-]{11}$/.test(video.key ?? "")
+      && (video.type === "Trailer" || video.type === "Teaser"))
+    .sort((a, b) => videoScore(b, preferredLanguage) - videoScore(a, preferredLanguage)
+      || (b.published_at ?? "").localeCompare(a.published_at ?? ""))
+    .map(video => video.key!))].slice(0, 5);
+}
+
 export function pickBestVideo(videos: TmdbVideo[] = [], preferredLanguage?: string | null): TmdbVideo | null {
-  return videos
-    .filter((video) => video.site === "YouTube" && video.key)
-    .sort((a, b) => {
-      const score = videoScore(b, preferredLanguage) - videoScore(a, preferredLanguage);
-      if (score !== 0) return score;
-      return (b.published_at ?? "").localeCompare(a.published_at ?? "");
-    })[0] ?? null;
+  const key = rankTrailerKeys(videos, preferredLanguage)[0];
+  return videos.find(video => video.key === key) ?? null;
 }
 
 export function pickBestLogo(logos: Logo[] = [], preferredLanguage?: string | null): string | null {
@@ -145,124 +89,73 @@ export function pickBestLogo(logos: Logo[] = [], preferredLanguage?: string | nu
   return scored[0]?.logo.file_path ?? null;
 }
 
-async function fetchLocalizedVideos(mediaType: MediaType, id: string, originalLanguage: string | null, countries: string[]) {
-  const tags = videoLanguageTags(originalLanguage, countries);
-  const results: TmdbVideo[] = [];
-
-  for (const language of tags) {
-    const data = await tmdbFetch<{ results?: TmdbVideo[] }>(
-      `/${mediaType}/${id}/videos`,
-      { language },
-      { revalidate: CACHE.day },
-    ).catch(() => null);
-
-    if (data?.results?.length) results.push(...data.results);
-    if (pickBestVideo(results, originalLanguage)) break;
-  }
-
-  return results;
-}
-
-
-export async function findBestTrailerKey(
+export async function findTrailerKeys(
   mediaType: MediaType,
   id: string,
   videos: TmdbVideo[] = [],
   originalLanguage?: string | null,
-  countries: string[] = [],
-): Promise<string | null> {
-  let trailerVideo = pickBestVideo(videos, originalLanguage);
-
-  if (!trailerVideo && originalLanguage && originalLanguage !== "en") {
-    const localizedVideos = await fetchLocalizedVideos(mediaType, id, originalLanguage, countries);
-    trailerVideo = pickBestVideo([...videos, ...localizedVideos], originalLanguage);
-  }
-
-  return trailerVideo?.key ?? null;
+): Promise<string[]> {
+  const keys = rankTrailerKeys(videos, originalLanguage);
+  if (keys.length || !originalLanguage || originalLanguage === "en") return keys;
+  const localized = await tmdbFetch<{ results?: TmdbVideo[] }>(
+    `/${mediaType}/${id}/videos`,
+    { language: originalLanguage, include_video_language: `en,null,${originalLanguage}` },
+    { revalidate: CACHE.day },
+  );
+  return rankTrailerKeys(localized.results ?? [], originalLanguage);
 }
 
-/* Per-request memo of getEnhancedMediaDetails so generateMetadata and the
-   page component share one TMDB round trip instead of fetching twice. */
+export async function findBestTrailerKey(
+  mediaType: MediaType, id: string, videos: TmdbVideo[] = [], originalLanguage?: string | null,
+): Promise<string | null> {
+  return (await findTrailerKeys(mediaType, id, videos, originalLanguage))[0] ?? null;
+}
+
+// Use exactly the same request for heroes, previews and detail pages so they
+// share the persistent Next fetch cache as well as concurrent requests.
+export function getMediaBundle(mediaType: MediaType, id: string) {
+  if (!/^[1-9]\d{0,9}$/.test(id)) throw new TmdbError(404, "Title not found.");
+  return tmdbFetch(`/${mediaType}/${id}`, {
+    append_to_response: "videos,credits,images",
+    include_image_language: "en,null",
+    include_video_language: "en,null",
+  }, { revalidate: CACHE.hour });
+}
+
 export const getCachedMediaDetails = cache(
   (mediaType: MediaType, id: string) => getEnhancedMediaDetails(mediaType, id),
 );
 
 export async function getEnhancedMediaDetails(mediaType: MediaType, id: string) {
-  const [data, imagesData] = await Promise.all([
-    tmdbFetch(
-      `/${mediaType}/${id}`,
-      { append_to_response: "videos,credits", include_video_language: "en,null" },
-      { revalidate: CACHE.hour },
-    ),
-    /* A dropped images call must not sink the whole details response — it
-       would surface as "no logo" and get cached as a text title for an hour.
-       The widening passes below retry it. */
-    tmdbFetch<{ logos?: Logo[] }>(
-      `/${mediaType}/${id}/images`,
-      { include_image_language: "en,null" },
-      { revalidate: CACHE.hour },
-    ).catch(() => null),
-  ]);
-
+  const data = await getMediaBundle(mediaType, id);
   const originalLanguage = typeof data.original_language === "string" ? data.original_language : null;
-  const countries = mediaType === "tv" ? productionCountries(data.origin_country) : productionCountries(data.production_countries);
-
-  /* Widen the search until a logo turns up. The narrow en/neutral pass misses
-     plenty of titles — Parasite has one logo there and four unfiltered, Your
-     Name five and fifteen — and every miss falls back to a plain text title.
-     pickBestLogo still ranks en > language-neutral > the title's own language,
-     so widening only ever adds candidates; it never demotes an English one.
-     `language: null` sheds tmdbFetch's en-US default, which /images applies
-     as a filter of its own. */
-  let logos = imagesData?.logos ?? [];
-  if (!pickBestLogo(logos, originalLanguage)) {
-    const widerPasses: Record<string, ParamValue>[] = [
-      /* Same query as above: covers the first call having been dropped
-         rather than the title genuinely lacking an English logo. */
-      { include_image_language: "en,null" },
-    ];
-    if (originalLanguage && originalLanguage !== "en") {
-      widerPasses.push({
-        include_image_language: `en,null,${originalLanguage}`,
-      });
-    }
-    widerPasses.push({ language: null });
-
-    for (const params of widerPasses) {
-      const wider = await tmdbFetch<{ logos?: Logo[] }>(
-        `/${mediaType}/${id}/images`,
-        params,
-        { revalidate: CACHE.day },
-      ).catch(() => null);
-      if (wider?.logos?.length) {
-        logos = wider.logos;
-        if (pickBestLogo(logos, originalLanguage)) break;
-      }
-    }
-  }
-
-  const videos: TmdbVideo[] = data.videos?.results ?? [];
-  const trailerKey = await findBestTrailerKey(mediaType, id, videos, originalLanguage, countries);
-
-  const credits = data.credits;
+  const initialLogos: Logo[] = data.images?.logos ?? [];
+  let partial = data.videos?.success === false || data.credits?.success === false || data.images?.success === false;
+  // Only widen a genuine miss. Do not repeat the identical English query.
+  const [logos, trailerKeys] = await Promise.all([
+    pickBestLogo(initialLogos, originalLanguage)
+      ? Promise.resolve(initialLogos)
+      : tmdbFetch<{ logos?: Logo[] }>(`/${mediaType}/${id}/images`, { language: null }, { revalidate: CACHE.day })
+        .then(images => images.logos ?? initialLogos).catch(() => { partial = true; return initialLogos; }),
+    findTrailerKeys(mediaType, id, data.videos?.results ?? [], originalLanguage)
+      .catch(() => { partial = true; return []; }),
+  ]);
   const details = { ...data };
   delete details.videos;
   delete details.credits;
-
+  delete details.images;
   return {
     data: details,
-    credits,
+    credits: data.credits,
     logo: pickBestLogo(logos, originalLanguage),
-    trailerKey,
+    trailerKey: trailerKeys[0] ?? null,
+    trailerKeys,
+    partial,
   };
 }
 
 function providerBaseName(name: string) {
   return name.toLowerCase().replace(/ (with ads|basic|free|standard).*$/, "").trim();
-}
-
-function hasStreamingProviders(region?: ProviderRegion | null) {
-  return Boolean(region?.flatrate?.length || region?.free?.length || region?.ads?.length);
 }
 
 export function pickProviderRegion(
@@ -271,17 +164,10 @@ export function pickProviderRegion(
 ) {
   if (!results) return { region: requestedRegion, data: null, fallback: false };
 
-  const ordered = unique([
-    requestedRegion,
-    ...PROVIDER_REGION_FALLBACKS,
-    ...Object.keys(results).sort(),
-  ]);
-  const region = ordered.find((code) => hasStreamingProviders(results[code])) ?? requestedRegion;
-
   return {
-    region,
-    data: results[region] ?? null,
-    fallback: region !== requestedRegion,
+    region: requestedRegion,
+    data: results[requestedRegion] ?? null,
+    fallback: false,
   };
 }
 

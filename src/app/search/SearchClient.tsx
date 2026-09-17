@@ -5,17 +5,27 @@ import {
   useEffect,
   useRef,
   useCallback,
-  useLayoutEffect,
   useMemo,
+  useLayoutEffect,
 } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Search, X } from "lucide-react";
 import gsap from "gsap";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MovieDetailsModal from "@/components/MovieDetailsModal";
+import TvDetailsModal from "@/components/TvDetailsModal";
 import BlurImage from "@/components/BlurImage";
+import { useRegionPreference } from "@/lib/useRegionPreference";
+import { VALID_REGIONS } from "@/lib/geo";
+import { recordSearchInterest } from "@/lib/search-interests";
+import TitleCard from "@/components/discovery/TitleCard";
+import SearchSuggestions from "@/components/discovery/SearchSuggestions";
 
 const GENRES: Record<number, string> = {
   28: "Action",
@@ -36,20 +46,13 @@ const GENRES: Record<number, string> = {
   53: "Thriller",
   10752: "War",
   37: "Western",
+  10759: "Action & Adventure",
+  10765: "Sci-Fi & Fantasy",
+  10768: "War & Politics",
 };
 
 type YearOption = "all" | "2020s" | "2010s" | "2000s" | "1990s" | "older";
 type SortOption = "relevance" | "popularity" | "rating" | "newest";
-
-/* Ordered stops for the year slider (chronological → newest on the right). */
-const YEAR_STOPS: { v: YearOption; label: string }[] = [
-  { v: "all", label: "All" },
-  { v: "older", label: "‹’90" },
-  { v: "1990s", label: "’90s" },
-  { v: "2000s", label: "’00s" },
-  { v: "2010s", label: "’10s" },
-  { v: "2020s", label: "’20s" },
-];
 
 const SORTS: { v: SortOption; label: string }[] = [
   { v: "relevance", label: "Relevance" },
@@ -92,100 +95,15 @@ interface Item {
   genre_ids?: number[];
   popularity?: number;
   known_for_department?: string;
+  original_language?: string;
 }
 
-/* Genres HAL can pull the fallback shelf from — one at random.
-   Sci-Fi, Adventure, Horror. */
-const GENRE_IDS = ["878", "12", "27"];
-const randomGenreId = () =>
-  GENRE_IDS[Math.floor(Math.random() * GENRE_IDS.length)];
-
 const itemKey = (it: Item) => `${it.media_type ?? "x"}-${it.id}`;
-
-/* HAL's one and only answer when the database comes up empty — the line. */
-const HAL_LINE = "I'm sorry, Dave. I'm afraid I can't do that.";
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
   typeof window.matchMedia === "function" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-/* Fisher–Yates shuffle, in place. */
-function shuffle<T>(arr: T[]): T[] {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-/* Fallback shelf for the empty state. Picks a random genre, then samples random
-   pages from across its credibly-voted catalogue (capped at page 200) and keeps
-   a random `want` of them — so the shelf is different every time. Robust: learns
-   each genre's real page count, retries other genres if one is thin, never throws. */
-async function fetchTopRatedShelf(want: number): Promise<Item[]> {
-  const MAX_PAGE = 200;
-  const SAMPLE_PAGES = 4; // random pages to pull (≈80 titles) beyond the head
-  const tried = new Set<string>();
-  let best: Item[] = [];
-
-  for (let attempt = 0; attempt < 3 && best.length < want; attempt++) {
-    let genre = randomGenreId();
-    for (let g = 0; tried.has(genre) && g < 10; g++) genre = randomGenreId();
-    tried.add(genre);
-
-    const url = (page: number) =>
-      `/api/getMoviesByGenre?id=${genre}&page=${page}` +
-      `&sort_by=vote_average.desc&vote_count_gte=150`;
-
-    try {
-      // page 1 doubles as the source of truth for how many pages exist
-      const head = await fetch(url(1)).then((r) => r.json());
-      const cap = Math.min(MAX_PAGE, Math.max(1, head?.total_pages ?? 1));
-
-      const pageNums = new Set<number>();
-      for (
-        let g = 0;
-        pageNums.size < Math.min(SAMPLE_PAGES, cap) && g < 60;
-        g++
-      )
-        pageNums.add(1 + Math.floor(Math.random() * cap));
-
-      const rest = await Promise.all(
-        [...pageNums].map((p) => fetch(url(p)).then((r) => r.json())),
-      );
-
-      const seen = new Set<number>();
-      const items: Item[] = [head, ...rest]
-        .flatMap((p) => (p?.results ?? []) as Item[])
-        .filter((m) => {
-          if (!m.poster_path || seen.has(m.id)) return false;
-          seen.add(m.id);
-          return true;
-        })
-        .map((m) => ({ ...m, media_type: "movie" as const }));
-
-      if (items.length > best.length) best = items;
-    } catch {
-      /* try another genre */
-    }
-  }
-
-  return shuffle(best).slice(0, want);
-}
-
-/* Empty-state shelves, cached per not-found query and keyed at module scope so
-   they survive client navigation (leaving /search and coming back). A given
-   query always shows the same shelf; a *different* not-found search rolls a new
-   one. Bounded so it can't grow without limit over a long session. */
-const shelfCache = new Map<string, Item[]>();
-function cacheShelf(key: string, items: Item[]) {
-  shelfCache.set(key, items);
-  if (shelfCache.size > 12) {
-    const oldest = shelfCache.keys().next().value;
-    if (oldest !== undefined) shelfCache.delete(oldest);
-  }
-}
 
 /* Pure sort by criterion (relevance keeps the incoming API order). */
 function sortItems(items: Item[], sortBy: SortOption): Item[] {
@@ -221,228 +139,124 @@ function toModalMovie(it: Item) {
 }
 
 interface Filters {
+  type: "all" | "movie" | "tv";
+  rating: string;
+  language: string;
   genre: string;
   year: YearOption;
   includeAdult: boolean;
   sortBy: SortOption;
 }
 
+const DEFAULT_FILTERS: Filters = { type: "all", genre: "all", year: "all", includeAdult: false, sortBy: "relevance", rating: "any", language: "any" };
+const LANGUAGES = [["any", "Any language"], ["en", "English"], ["hi", "Hindi"], ["ta", "Tamil"], ["te", "Telugu"], ["ml", "Malayalam"], ["ko", "Korean"], ["ja", "Japanese"], ["fr", "French"], ["es", "Spanish"], ["de", "German"], ["zh", "Chinese"]];
+
 /* Matches MediaGrid's container/column convention exactly, so results read
    as the same grid system as the rest of the app. */
-const PAD = "px-5 md:px-8 lg:px-12";
+const PAD = "px-(--gutter)";
 
 /* "All" first, then every genre — the Genre filter's option list. */
 const GENRE_ENTRIES: [string, string][] = [
   ["all", "All"],
   ...Object.entries(GENRES),
 ];
-const GRID = "grid grid-cols-3 sm:grid-cols-6";
+const GRID = "grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4 lg:grid-cols-6";
+
+type ResultPageState = { endpoint: string; items: Item[]; page: number; hasMore: boolean; loading: boolean; settled: boolean; error: boolean };
+function useResultPages(endpoint: string, isSearch: boolean) {
+  const [state, setState] = useState<ResultPageState>({ endpoint, items: [], page: 0, hasMore: true, loading: true, settled: false, error: false });
+  const controller = useRef<AbortController | null>(null);
+  const load = useCallback(async (page: number) => {
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
+    setState(previous => ({ ...(previous.endpoint === endpoint && page > 1 ? previous : { endpoint, items: [], page: 0, hasMore: true, settled: false }), loading: true, error: false }));
+    try {
+      const response = await fetch(`${endpoint}&page=${page}`, { signal: request.signal });
+      if (!response.ok) throw new Error("Request failed");
+      const json = await response.json();
+      if (request.signal.aborted) return;
+      const data = isSearch ? json.data : json;
+      const items: Item[] = (data?.results ?? []).map((item: Item) => ({ ...item, media_type: item.media_type ?? (item.first_air_date || (!item.title && item.name) ? "tv" : "movie") }));
+      setState(previous => {
+        const merged = new Map((page > 1 && previous.endpoint === endpoint ? previous.items : []).map(item => [itemKey(item), item]));
+        items.forEach(item => merged.set(itemKey(item), item));
+        return { endpoint, items: [...merged.values()], page, hasMore: page < (data?.total_pages ?? 1), loading: false, settled: true, error: false };
+      });
+    } catch {
+      if (!request.signal.aborted) setState(previous => ({ ...previous, loading: false, settled: true, error: true }));
+    } finally { if (controller.current === request) controller.current = null; }
+  }, [endpoint, isSearch]);
+  useEffect(() => {
+    const timer = setTimeout(() => void load(1), 0);
+    return () => { clearTimeout(timer); controller.current?.abort(); };
+  }, [load]);
+  const current = state.endpoint === endpoint ? state : { endpoint, items: [], page: 0, hasMore: true, loading: true, settled: false, error: false };
+  const loadMore = useCallback(() => { if (!controller.current && state.endpoint === endpoint && state.hasMore && state.settled && !state.error) void load(state.page + 1); }, [endpoint, load, state]);
+  return { ...current, loadMore, retry: () => void load(current.page + 1) };
+}
 
 export default function SearchClient() {
   const searchParams = useSearchParams();
-  const router = useRouter();
+  const writtenQuery = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  /* Frozen display order — keeps already-placed cards from reshuffling
-     when later pages arrive while a sort is active. */
-  const orderRef = useRef<string[]>([]);
-  const sigRef = useRef<string>("");
-
   const urlQ = searchParams.get("q") ?? "";
 
   const [query, setQuery] = useState(urlQ);
-  const [dq, setDq] = useState(urlQ);
-
-  /* Search mode — driven by the query string. */
-  const [searchResults, setSearchResults] = useState<Item[]>([]);
-  const [searchPage, setSearchPage] = useState(1);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchHasMore, setSearchHasMore] = useState(true);
-  const [searchSettled, setSearchSettled] = useState(false);
-
-  /* Browse mode — the default infinite top-rated shelf, shown whenever there's
-     no query. Filters drive it server-side via /api/getDiscover. */
-  const [browseResults, setBrowseResults] = useState<Item[]>([]);
-  const [browsePage, setBrowsePage] = useState(1);
-  const [browseLoading, setBrowseLoading] = useState(false);
-  const [browseHasMore, setBrowseHasMore] = useState(true);
-  const [browseSettled, setBrowseSettled] = useState(false);
+  const [dq, setDq] = useState(urlQ.trim());
 
   const [modalItem, setModalItem] = useState<Item | null>(null);
-  /* Bumped to re-render once a freshly-fetched shelf lands in shelfCache. */
-  const [, bumpShelf] = useState(0);
-  const [filters, setFilters] = useState<Filters>({
-    genre: "all",
-    year: "all",
-    includeAdult: false,
-    sortBy: "relevance",
-  });
+  const { region, changeRegion } = useRegionPreference();
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
 
   const hasQuery = dq.trim().length > 0;
 
   useEffect(() => {
-    queueMicrotask(() => {
-      setQuery(urlQ);
-      setDq(urlQ);
-    });
+    if (urlQ === writtenQuery.current) return;
+    queueMicrotask(() => { setQuery(urlQ); setDq(urlQ.trim()); });
   }, [urlQ]);
 
   useEffect(() => {
-    const t = setTimeout(() => setDq(query), 300);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => {
+      const next = query.trim();
+      setDq(next);
+      writtenQuery.current = next;
+      const url = new URL(window.location.href);
+      if (next) url.searchParams.set("q", next); else url.searchParams.delete("q");
+      window.history.replaceState(null, "", url.pathname + url.search);
+    }, 300);
+    return () => clearTimeout(timer);
   }, [query]);
 
-  useEffect(() => {
-    const q = dq.trim();
-    const next = q ? `/search?q=${encodeURIComponent(q)}` : "/search";
-    router.replace(next, { scroll: false });
-  }, [dq, router]);
+  const browseParams = new URLSearchParams({ type: filters.type === "all" ? "mixed" : filters.type, sort_by: DISCOVER_SORT[filters.sortBy].sort_by });
+  const yr = DISCOVER_YEAR[filters.year];
+  const votes = DISCOVER_SORT[filters.sortBy].voteCountGte;
+  if (votes) browseParams.set("vote_count_gte", String(votes));
+  if (filters.genre !== "all") browseParams.set("with_genres", filters.genre);
+  if (yr.from) browseParams.set("year_from", String(yr.from));
+  if (yr.to) browseParams.set("year_to", String(yr.to));
+  if (filters.rating !== "any") browseParams.set("vote_average_gte", filters.rating);
+  if (filters.language !== "any") browseParams.set("language", filters.language);
+  browseParams.set("include_adult", String(filters.includeAdult));
+  if (region) browseParams.set("origin_country", region);
+  const searchFilters = new URLSearchParams(browseParams);
+  searchFilters.set("type", filters.type);
+  const endpoint = hasQuery
+    ? `/api/getSearch?query=${encodeURIComponent(dq)}&${searchFilters}`
+    : `/api/getDiscover?${browseParams}`;
+  const result = useResultPages(endpoint, hasQuery);
+  const searchResults = result.items;
+  const browseResults = hasQuery ? [] : result.items;
+  const searchLoading = result.loading;
+  const browseLoading = result.loading;
+  const searchHasMore = result.hasMore;
+  const browseHasMore = result.hasMore;
+  const searchSettled = result.settled;
+  const browseSettled = result.settled;
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      setSearchResults([]);
-      setSearchPage(1);
-      setSearchHasMore(true);
-      setSearchSettled(false);
-    });
-  }, [dq, filters.includeAdult]);
+  const { loading: requestLoading, hasMore: requestHasMore, error: requestError, loadMore } = result;
 
-  const fetchSearchMore = useCallback(async () => {
-    if (searchLoading || !searchHasMore || !dq.trim()) return;
-    setSearchLoading(true);
-    try {
-      const res = await fetch(
-        `/api/getSearch?query=${encodeURIComponent(dq)}&page=${searchPage}&include_adult=${filters.includeAdult}`,
-      );
-      const json = await res.json();
-      const raw: Item[] = json.data?.results ?? [];
-      if (!raw.length) {
-        setSearchHasMore(false);
-        return;
-      }
-      const items = raw.filter((r) => r.poster_path || r.profile_path);
-      setSearchResults((prev) => {
-        const seen = new Set(prev.map(itemKey));
-        const merged = [...prev];
-        for (const r of items) {
-          const k = itemKey(r);
-          if (seen.has(k)) continue;
-          seen.add(k);
-          merged.push(r);
-        }
-        return merged;
-      });
-      setSearchPage((p) => p + 1);
-    } catch {
-      setSearchHasMore(false);
-    } finally {
-      setSearchLoading(false);
-      setSearchSettled(true);
-    }
-  }, [dq, searchPage, searchLoading, searchHasMore, filters.includeAdult]);
-
-  useEffect(() => {
-    if (!dq.trim() || searchResults.length > 0 || searchLoading) return;
-    const t = setTimeout(() => {
-      void fetchSearchMore();
-    }, 0);
-    return () => clearTimeout(t);
-  }, [dq, searchResults.length, searchLoading, fetchSearchMore]);
-
-  /* Browse mode — resets whenever a filter that the discover query depends on
-     changes. Genre / year / sort are sent straight to the API; the resulting
-     list is already correctly ordered, so unlike search mode it needs no
-     client-side re-sort. */
-  useEffect(() => {
-    queueMicrotask(() => {
-      setBrowseResults([]);
-      setBrowsePage(1);
-      setBrowseHasMore(true);
-      setBrowseSettled(false);
-    });
-  }, [filters.genre, filters.year, filters.sortBy, filters.includeAdult]);
-
-  const fetchBrowseMore = useCallback(async () => {
-    if (browseLoading || !browseHasMore) return;
-    setBrowseLoading(true);
-    try {
-      const sort = DISCOVER_SORT[filters.sortBy];
-      const yr = DISCOVER_YEAR[filters.year];
-      const params = new URLSearchParams({
-        type: "movie",
-        sort_by: sort.sort_by,
-        page: String(browsePage),
-      });
-      if (sort.voteCountGte) params.set("vote_count_gte", String(sort.voteCountGte));
-      if (filters.genre !== "all") params.set("with_genres", filters.genre);
-      if (yr.from) params.set("year_from", String(yr.from));
-      if (yr.to) params.set("year_to", String(yr.to));
-      if (filters.includeAdult) params.set("include_adult", "true");
-
-      const res = await fetch(`/api/getDiscover?${params.toString()}`);
-      const json = await res.json();
-      const raw: Item[] = json.results ?? [];
-      if (!raw.length) {
-        setBrowseHasMore(false);
-        return;
-      }
-      const items = raw
-        .filter((r) => r.poster_path)
-        .map((m) => ({ ...m, media_type: "movie" as const }));
-      setBrowseResults((prev) => {
-        const seen = new Set(prev.map(itemKey));
-        const merged = [...prev];
-        for (const r of items) {
-          const k = itemKey(r);
-          if (seen.has(k)) continue;
-          seen.add(k);
-          merged.push(r);
-        }
-        return merged;
-      });
-      setBrowsePage((p) => p + 1);
-    } catch {
-      setBrowseHasMore(false);
-    } finally {
-      setBrowseLoading(false);
-      setBrowseSettled(true);
-    }
-  }, [filters, browsePage, browseLoading, browseHasMore]);
-
-  useEffect(() => {
-    if (hasQuery || browseResults.length > 0 || browseLoading) return;
-    const t = setTimeout(() => {
-      void fetchBrowseMore();
-    }, 0);
-    return () => clearTimeout(t);
-  }, [hasQuery, browseResults.length, browseLoading, fetchBrowseMore]);
-
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([e]) => {
-        if (!e.isIntersecting) return;
-        if (hasQuery) {
-          if (!searchLoading && searchHasMore && dq.trim()) fetchSearchMore();
-        } else if (!browseLoading && browseHasMore) {
-          fetchBrowseMore();
-        }
-      },
-      { rootMargin: "1400px 0px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [
-    hasQuery,
-    dq,
-    searchLoading,
-    searchHasMore,
-    fetchSearchMore,
-    browseLoading,
-    browseHasMore,
-    fetchBrowseMore,
-  ]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -450,265 +264,87 @@ export default function SearchClient() {
       if (!el) return;
       el.focus();
       const end = el.value.length;
-      el.setSelectionRange(end, end);
+      try { el.setSelectionRange(end, end); } catch { /* Search inputs may not support selection ranges. */ }
     }, 0);
     return () => clearTimeout(t);
   }, []);
 
-  const searchDisplayed = useMemo(() => {
-    let items = searchResults;
-
-    if (filters.genre !== "all") {
-      const genreId = parseInt(filters.genre, 10);
-      items = items.filter((i) => i.genre_ids?.includes(genreId));
-    }
-
-    if (filters.year !== "all") {
-      items = items.filter((i) => {
-        const dateStr = i.release_date || i.first_air_date;
-        if (!dateStr) return false;
-        const y = parseInt(dateStr.substring(0, 4), 10);
-        if (filters.year === "2020s") return y >= 2020;
-        if (filters.year === "2010s") return y >= 2010 && y < 2020;
-        if (filters.year === "2000s") return y >= 2000 && y < 2010;
-        if (filters.year === "1990s") return y >= 1990 && y < 2000;
-        if (filters.year === "older") return y < 1990;
-        return true;
-      });
-    }
-
-    const sorted = sortItems(items, filters.sortBy);
-    const byKey = new Map(items.map((i) => [itemKey(i), i]));
-
-    /* Signature of the view definition — changes when query / filter / sort
-       change, but NOT when more pages load. */
-    const sig = [dq, filters.genre, filters.year, filters.sortBy].join("|");
-
-    let order: string[];
-    if (sig !== sigRef.current) {
-      sigRef.current = sig;
-      order = sorted.map(itemKey);
-    } else {
-      /* Same view, more pages → keep placed cards put, append new ones. */
-      const kept = orderRef.current.filter((k) => byKey.has(k));
-      const seen = new Set(kept);
-      const appended = sorted.map(itemKey).filter((k) => !seen.has(k));
-      order = [...kept, ...appended];
-    }
-    orderRef.current = order;
-
-    return order.map((k) => byKey.get(k)!).filter(Boolean);
-  }, [searchResults, dq, filters.genre, filters.year, filters.sortBy]);
+  const searchDisplayed = sortItems(searchResults, filters.sortBy);
 
   const gridItems = hasQuery ? searchDisplayed : browseResults;
   const loading = hasQuery ? searchLoading : browseLoading;
   const hasMore = hasQuery ? searchHasMore : browseHasMore;
   const settled = hasQuery ? searchSettled : browseSettled;
-  const emptyState = hasQuery && gridItems.length === 0 && !loading && settled;
+  const emptyState = hasQuery && gridItems.length === 0 && !hasMore && !loading && settled && !result.error;
   /* Distinct from `emptyState`: this is filters narrowing the top-rated shelf
      to nothing, not a failed search — a quiet inline note, not HAL's line. */
   const browseEmptyState =
-    !hasQuery && gridItems.length === 0 && !loading && settled;
+    !hasQuery && gridItems.length === 0 && !loading && settled && !result.error;
 
-  /* When a search comes up empty, HAL offers a shelf of top-rated films from a
-     random genre. Keyed by the failed query: a new not-found search rolls a new
-     shelf, but the same query (e.g. after navigating away and back) keeps its
-     shelf from shelfCache. setState only runs inside the async callbacks. */
-  const shelfKey = dq.trim();
   useEffect(() => {
-    if (!emptyState || shelfCache.has(shelfKey)) return;
-    let cancelled = false;
-    fetchTopRatedShelf(42)
-      .then((items) => {
-        cacheShelf(shelfKey, items);
-        if (!cancelled) bumpShelf((n) => n + 1);
-      })
-      .catch(() => {
-        cacheShelf(shelfKey, []); // cache the miss so skeletons stop
-        if (!cancelled) bumpShelf((n) => n + 1);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [emptyState, shelfKey]);
+    const el = sentinelRef.current;
+    if (!el || (hasQuery && gridItems.length === 0) || requestLoading || !requestHasMore || requestError) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) loadMore();
+    }, { rootMargin: "600px 0px" });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasQuery, gridItems.length, requestLoading, requestHasMore, requestError, loadMore]);
 
-  const cachedShelf = emptyState ? shelfCache.get(shelfKey) : undefined;
-  const sciFiLoading = emptyState && cachedShelf === undefined;
-  const sciFiItems = cachedShelf ?? [];
+  useEffect(() => {
+    if (!hasQuery || !settled || loading) return;
+    const exact = gridItems.find(item => item.media_type !== "person" && (item.title ?? item.name ?? "").toLocaleLowerCase() === dq.toLocaleLowerCase());
+    if (exact?.media_type && exact.media_type !== "person") recordSearchInterest({ id: exact.id, media_type: exact.media_type, title: exact.title ?? exact.name ?? "", genre_ids: exact.genre_ids });
+  }, [dq, hasQuery, settled, loading, gridItems]);
+  // Keep looking automatically when filters remove a batch, with a bounded budget.
+  useEffect(() => {
+    if (hasQuery && !gridItems.length && result.page < 5 && hasMore && !loading && settled && !result.error) loadMore();
+  }, [hasQuery, gridItems.length, result.page, hasMore, loading, settled, result.error, loadMore]);
+
+  const activeFilters = [
+    ...(filters.type !== "all" ? [{ key: "type" as const, label: filters.type === "movie" ? "Films" : "Series" }] : []),
+    ...(filters.genre !== "all" ? [{ key: "genre" as const, label: GENRES[Number(filters.genre)] }] : []),
+    ...(filters.year !== "all" ? [{ key: "year" as const, label: filters.year === "older" ? "Before 1990" : filters.year }] : []),
+    ...(filters.rating !== "any" ? [{ key: "rating" as const, label: `${filters.rating}+ rating` }] : []),
+    ...(filters.language !== "any" ? [{ key: "language" as const, label: LANGUAGES.find(([value]) => value === filters.language)?.[1] ?? filters.language }] : []),
+    ...(filters.includeAdult ? [{ key: "includeAdult" as const, label: "Include adult" }] : []),
+  ];
+  const filterFields = [
+    { key: "genre" as const, label: "Genre", options: GENRE_ENTRIES.filter(([id]) => filters.type === "all" || (filters.type === "tv" ? !["28", "12", "14", "36", "27", "10402", "10749", "878", "53", "10752"].includes(id) : !["10759", "10765", "10768"].includes(id))) },
+    { key: "year" as const, label: "Release period", options: [["all", "Any era"], ["2020s", "2020 onwards"], ["2010s", "2010 – 2019"], ["2000s", "2000 – 2009"], ["1990s", "1990 – 1999"], ["older", "Before 1990"]] },
+    { key: "rating" as const, label: "Audience rating", options: [["any", "Any rating"], ["6", "6+ · Worth a look"], ["7", "7+ · Well loved"], ["8", "8+ · Acclaimed"]] },
+    { key: "language" as const, label: "Original language", options: LANGUAGES },
+    { key: "sortBy" as const, label: "Sort by", options: SORTS.map(option => [option.v, !hasQuery && option.v === "relevance" ? "Recommended" : option.label]) },
+  ];
 
   return (
-    <div className="min-h-screen bg-[#010101] pt-[66px] text-white">
-      {/* ══ Console — query, filters, and HAL. A 60/40 split with the results
-          below: the console claims the top 60% of the viewport, HAL scales up
-          large enough to bleed past that boundary, and the results section
-          (z-10, painted after) covers HAL's lower body where they overlap —
-          so HAL reads as standing *behind* the shelf, eye still in full view. ══ */}
-      <div className="bg-[#010101] lg:min-h-[50vh]">
-        <div
-          className={cn(
-            PAD,
-            "relative z-0 mx-auto flex max-w-[1600px] flex-col lg:min-h-[50vh] lg:flex-row lg:items-stretch",
-          )}
-        >
-          {/* Query + filters */}
-          <div className="order-2 flex flex-1 flex-col justify-center py-7 lg:order-1 lg:justify-end lg:py-9 lg:pr-[340px] xl:pr-[400px]">
-            {/* Query — the page's headline, not a form field. A micro-label
-                names it, the typed query carries display weight, and the rule
-                beneath lights up on focus (the same selection signature the
-                filters and the hero's genre picker use). */}
-            <div className="group w-full max-w-[640px]">
-              <span className="mb-3 flex items-center gap-2 font-manrope text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-600 transition-colors duration-300 group-focus-within:text-neutral-400">
-                <Search className="h-3 w-3" />
-                Search
-              </span>
-
-              <div className="flex items-center gap-4 pb-3">
-                <Input
-                  ref={inputRef}
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Movies, series, anything…"
-                  aria-label="Search movies and TV shows"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="h-auto min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 font-manrope text-[26px] font-semibold leading-[1.15] tracking-[-0.01em] text-white shadow-none placeholder:font-medium placeholder:tracking-[-0.005em] placeholder:text-white/[0.18] focus-visible:ring-0 md:text-[32px] lg:text-[38px]"
-                />
-                {hasQuery && (
-                  <button
-                    onClick={() => {
-                      setQuery("");
-                      inputRef.current?.focus();
-                    }}
-                    aria-label="Clear search"
-                    className="shrink-0 text-white/25 transition-colors duration-200 hover:text-white"
-                  >
-                    <X className="h-[18px] w-[18px]" />
-                  </button>
-                )}
-              </div>
-
-              <span
-                aria-hidden
-                className="block h-[2px] w-full rounded-full bg-white/[0.09] transition-colors duration-300 group-focus-within:bg-white motion-reduce:transition-none"
-              />
-            </div>
-
-            {/* Filters — always on; they drive the search results and the
-                default top-rated shelf alike. A quiet label opens each row
-                so Sort / Year / Rated / Genre read as separate groups at a
-                glance, instead of one undifferentiated run of words. */}
-            <div className="mt-8 flex max-w-[640px] flex-col gap-4">
-              <FilterRow label="Sort">
-                {SORTS.filter((s) => hasQuery || s.v !== "relevance").map(
-                  (s) => {
-                    /* Browse mode has no "Relevance" option — "Top Rated"
-                       already means the same thing there, so it carries the
-                       active state for the relevance default too. */
-                    const active =
-                      filters.sortBy === s.v ||
-                      (!hasQuery && s.v === "rating" && filters.sortBy === "relevance");
-                    return (
-                      <FilterOption
-                        key={s.v}
-                        active={active}
-                        onClick={() => setFilters((f) => ({ ...f, sortBy: s.v }))}
-                      >
-                        {s.label}
-                      </FilterOption>
-                    );
-                  },
-                )}
-              </FilterRow>
-
-              <FilterRow label="Year">
-                {YEAR_STOPS.map((s) => (
-                  <FilterOption
-                    key={s.v}
-                    active={filters.year === s.v}
-                    onClick={() => setFilters((f) => ({ ...f, year: s.v }))}
-                  >
-                    {s.v === "all" ? "Any" : s.label}
-                  </FilterOption>
-                ))}
-              </FilterRow>
-
-              <FilterRow label="Rated">
-                <FilterOption
-                  tone="danger"
-                  active={filters.includeAdult}
-                  onClick={() =>
-                    setFilters((f) => ({ ...f, includeAdult: !f.includeAdult }))
-                  }
-                >
-                  18+
-                </FilterOption>
-              </FilterRow>
-
-              {/* Genre — wraps in the same plain-text vocabulary as the rows
-                  above. Every option stays visible and scannable; nothing
-                  hides behind a horizontal scroll. */}
-              <FilterRow label="Genre">
-                {GENRE_ENTRIES.map(([id, name]) => (
-                  <FilterOption
-                    key={id}
-                    active={filters.genre === id}
-                    onClick={() => setFilters((f) => ({ ...f, genre: id }))}
-                  >
-                    {name}
-                  </FilterOption>
-                ))}
-              </FilterRow>
-            </div>
-          </div>
-
-          {/* HAL — compact, mobile/tablet only. Below lg there's no adjacent
-              results section to bleed behind, so it stays in normal flow,
-              the same sized-wrapper trick as before (a CSS transform doesn't
-              shrink an element's layout box, so the wrapper is pre-sized to
-              the *scaled* footprint to avoid reserving the unscaled 248×660). */}
-          <div className="order-1 flex shrink-0 items-center justify-center py-6 lg:hidden">
-            <div className="relative h-[383px] w-[144px] sm:h-[462px] sm:w-[174px]">
-              <div className="absolute left-0 top-0 origin-top-left scale-[0.58] sm:scale-[0.7]">
-                <Hal9000Panel
-                  query={query}
-                  filtersStr={JSON.stringify(filters)}
-                  isActive={hasQuery}
-                  isTalking={emptyState}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* HAL — large, desktop only. Absolutely positioned so it can grow
-              past this row's own height and bleed down past the 50% line;
-              z-0 keeps it behind the results section (z-10) below, which
-              paints over HAL's lower body where the two overlap.
-              right-12 matches PAD's lg:px-12, so HAL's right edge lines up
-              with the grid's right edge exactly. top-1/2 + a translateY
-              tuned to the eye's position within the panel (~53% down) keeps
-              the eye centered in this section regardless of viewport height,
-              while the panel's height does the rest of the bleeding. */}
-          <div className="pointer-events-none absolute right-0 top-1/2 z-0 hidden -translate-y-[53%] lg:right-12 lg:block">
-            <div className="pointer-events-auto relative h-[759px] w-[285px] xl:h-[924px] xl:w-[347px]">
-              <div className="absolute left-0 top-0 origin-top-left scale-[1.15] xl:scale-[1.4]">
-                <Hal9000Panel
-                  query={query}
-                  filtersStr={JSON.stringify(filters)}
-                  isActive={hasQuery}
-                  isTalking={emptyState}
-                />
-              </div>
-            </div>
-          </div>
+    <div className="search-page discovery-controls min-h-screen bg-background pt-[66px] text-foreground">
+      <section className="search-console" aria-labelledby="search-heading">
+        <div className="search-workspace">
+          <p className="eyebrow">The archive is yours</p>
+          <h1 id="search-heading">What are you<br /><span>looking for?</span></h1>
+          <p className="search-intro">Search by title or person, or browse with the filters below.</p>
+          <div className="search-query-field"><Search size={22} aria-hidden="true" /><Input ref={inputRef} id="title-search" type="search" value={query} onChange={e => setQuery(e.target.value)} maxLength={100} placeholder="Find a film, series, or person…" aria-label="Search films and series" autoComplete="off" spellCheck={false} />{query && <Button variant="ghost" size="icon" aria-label="Clear search" onClick={() => { setQuery(""); inputRef.current?.focus(); }}><X /></Button>}</div>
+          <div className="search-format"><ToggleGroup type="single" value={filters.type} onValueChange={value => { if (value) setFilters(f => ({ ...f, type: value as Filters["type"], genre: "all" })); }} aria-label="Search format"><ToggleGroupItem value="all">Everything</ToggleGroupItem><ToggleGroupItem value="movie">Films</ToggleGroupItem><ToggleGroupItem value="tv">Series</ToggleGroupItem></ToggleGroup><span>{hasQuery ? "Search films, series, and people." : "Or explore without a title in mind."}</span></div>
         </div>
-      </div>
+        <figure className="hal-cameo" aria-label="HAL 9000 from 2001: A Space Odyssey">
+          <div className="hal-cameo-model"><Hal9000Panel query={query} filtersStr={JSON.stringify(filters)} isActive={hasQuery} isTalking={emptyState} /></div>
+          <figcaption><span className="eyebrow">Stanley Kubrick / 1968</span><h2>HAL<br />9000.</h2><p>2001: A Space Odyssey</p><Link href="/films/62" className="text-link">Explore the film <span aria-hidden="true">↗</span></Link></figcaption>
+        </figure>
+      </section>
+      <section className="search-refine" aria-label="Refine your search">
+        <div className="search-refine-heading"><p className="eyebrow">Filter your results</p><Button variant="ghost" size="sm" disabled={!activeFilters.length && filters.sortBy === "relevance"} onClick={() => setFilters(DEFAULT_FILTERS)}>Reset filters</Button></div>
+        <FieldGroup className="search-filter-fields"><Field><FieldLabel id="search-region">Region</FieldLabel><Select value={region || "global"} disabled={region === undefined} onValueChange={changeRegion}><SelectTrigger aria-labelledby="search-region" className="min-h-11 w-full"><SelectValue placeholder="Choose a region" /></SelectTrigger><SelectContent className="region-select-content"><SelectGroup><SelectItem value="global">All regions</SelectItem>{[...VALID_REGIONS].map(code => ({ code, name: new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code })).sort((a, b) => a.name.localeCompare(b.name)).map(country => <SelectItem key={country.code} value={country.code}>{country.name}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>{filterFields.map(field => <Field key={field.key}><FieldLabel id={`search-${field.key}`}>{field.label}</FieldLabel><Select value={filters[field.key]} onValueChange={value => setFilters(f => ({ ...f, [field.key]: value }))}><SelectTrigger aria-labelledby={`search-${field.key}`} className="min-h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{field.options.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>)}</FieldGroup>
+        <div className="search-filter-summary"><div className="search-filter-chips">{activeFilters.map(filter => <Button key={filter.key} variant="outline" size="sm" onClick={() => setFilters(f => ({ ...f, [filter.key]: DEFAULT_FILTERS[filter.key] }))} aria-label={`Remove ${filter.label} filter`}>{filter.label}<X data-icon="inline-end" /></Button>)}{!activeFilters.length && <span>Every genre. Every era. Open to anything.</span>}</div><label className="search-adult"><input type="checkbox" checked={filters.includeAdult} onChange={e => setFilters(f => ({ ...f, includeAdult: e.target.checked }))} />Include adult titles</label></div>
+      </section>
 
-      {/* ══ Results — the default top-rated shelf, or live search results.
-          relative z-10 + opaque background: this is what makes HAL read as
-          standing *behind* the shelf rather than just clipped off. ══ */}
+      {/* Results stay separate from the query and filter workspace. */}
       <div className="relative z-10 bg-[#010101] pt-8 pb-28 md:pb-16 lg:min-h-[50vh]">
-        <div className={cn(PAD, "mx-auto max-w-[1600px]")}>
+        <div className={cn(PAD, "mx-auto w-full")}>
+          <div className="search-results-heading"><h2>{hasQuery ? `Results for “${dq}”` : "Browse films and series"}</h2><p role="status">{loading ? "Searching…" : `${gridItems.length} ${hasQuery ? "matches" : "titles"}${hasMore ? " · More to explore" : ""}`}</p></div>
+          {hasQuery && (filters.genre !== "all" || filters.year !== "all" || filters.rating !== "any" || filters.language !== "any" || filters.sortBy !== "relevance") && <p className="search-results-note">Filters apply as we search through the catalogue. Sorting applies to loaded matches. Region shapes browse results and suggestions; title searches include every region.</p>}
+          {hasQuery && !gridItems.length && hasMore && !loading && settled && !result.error && <div className="search-no-matches"><h3>Still looking for a match.</h3><p>Try fewer filters or search the next set of titles.</p><Button variant="outline" onClick={loadMore}>Search more matches</Button></div>}
+          {result.error && <div role="alert" className="search-error"><p>Search couldn’t load. Please try again.</p><button type="button" onClick={result.retry}>Try again</button></div>}
           {gridItems.length === 0 && (loading || !settled) && (
             <div className={GRID}>
               {[...Array(18)].map((_, i) => (
@@ -734,12 +370,8 @@ export default function SearchClient() {
 
           {emptyState && (
             <>
-              <HalEmptyState />
-              <SciFiShelf
-                items={sciFiItems}
-                loading={sciFiLoading}
-                onOpen={setModalItem}
-              />
+              <div className="search-no-matches"><p className="eyebrow">Search results</p><h3>No matching titles found.</h3><p>Try another title or loosen a filter. Here are a few other directions to explore.</p><Button variant="outline" onClick={() => setFilters(DEFAULT_FILTERS)}>Reset filters</Button></div>
+
             </>
           )}
 
@@ -750,19 +382,16 @@ export default function SearchClient() {
               </p>
               <button
                 onClick={() =>
-                  setFilters({
-                    genre: "all",
-                    year: "all",
-                    includeAdult: filters.includeAdult,
-                    sortBy: "relevance",
-                  })
+                  setFilters(DEFAULT_FILTERS)
                 }
                 className="font-manrope text-[13px] font-semibold uppercase tracking-[0.08em] text-white underline underline-offset-4 transition-colors hover:text-white/75"
               >
-                Clear genre &amp; year
+                Reset filters
               </button>
             </div>
           )}
+
+          {settled && !loading && <SearchSuggestions query={browseParams.toString()} region={region} empty={emptyState || browseEmptyState || result.error || !gridItems.length} />}
 
           <div ref={sentinelRef} className="flex justify-center py-12">
             {!hasMore && gridItems.length > 0 && (
@@ -774,7 +403,8 @@ export default function SearchClient() {
         </div>
       </div>
 
-      {modalItem && (
+      {modalItem?.media_type === "tv" && <TvDetailsModal show={{ id: modalItem.id, name: modalItem.name ?? modalItem.title ?? "", overview: modalItem.overview ?? "", backdrop_path: modalItem.backdrop_path ?? "", genre_ids: modalItem.genre_ids ?? [], vote_average: modalItem.vote_average ?? 0, first_air_date: modalItem.first_air_date ?? "" }} onClose={() => setModalItem(null)} />}
+      {modalItem?.media_type !== "tv" && modalItem && (
         <MovieDetailsModal
           movie={toModalMovie(modalItem)}
           providers={[]}
@@ -785,123 +415,11 @@ export default function SearchClient() {
   );
 }
 
-/* The Sci-Fi archive HAL offers up when a search finds nothing. Lives inside the
-   already-padded results column, so it carries its own (PAD-free) header. */
-function SciFiShelf({
-  items,
-  loading,
-  onOpen,
-}: {
-  items: Item[];
-  loading: boolean;
-  onOpen: (item: Item) => void;
-}) {
-  return (
-    <div className="mt-4 md:mt-8">
-      {/* HAL, offering an alternative in his calm, unbothered way */}
-
-      <div className={GRID}>
-        {loading
-          ? [...Array(18)].map((_, i) => <SkeletonCard key={i} />)
-          : items.map((m, i) => (
-              <ResultCard key={m.id} item={m} onOpen={onOpen} index={i} />
-            ))}
-      </div>
-    </div>
-  );
-}
-
-function ResultCard({
-  item,
-  onOpen,
-  index,
-}: {
-  item: Item;
-  onOpen: (item: Item) => void;
-  index: number;
-}) {
-  const img = item.poster_path ?? item.profile_path;
-  const title = item.title ?? item.name ?? "";
-  const isPerson = item.media_type === "person";
-  const [shown, setShown] = useState(false);
-
-  const revealRef = useCallback((el: HTMLElement | null) => {
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setShown(true);
-      return;
-    }
-    const obs = new IntersectionObserver(
-      ([e]) => {
-        if (e.isIntersecting) {
-          setShown(true);
-          obs.disconnect();
-        }
-      },
-      { rootMargin: "0px 0px 800px 0px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-
-  const body = (
-    <div className="relative aspect-[2/3] overflow-hidden bg-neutral-900">
-      {img ? (
-        shown && (
-          <BlurImage
-            src={`https://image.tmdb.org/t/p/w342${img}`}
-            alt={title}
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
-          />
-        )
-      ) : (
-        <div className="flex h-full w-full items-center justify-center">
-          <span className="font-manrope text-[10px] uppercase tracking-[0.2em] text-neutral-700">
-            No Image
-          </span>
-        </div>
-      )}
-
-      <div className="absolute inset-0 bg-black/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-
-      {item.media_type && (
-        <span className="absolute left-2.5 top-2.5 z-20 rounded-none bg-black/70 px-2.5 py-1 font-manrope text-[9px] uppercase leading-none tracking-[0.16em] text-white/70 backdrop-blur-md">
-          {item.media_type === "tv"
-            ? "Series"
-            : item.media_type === "person"
-              ? "Person"
-              : "Movie"}
-        </span>
-      )}
-    </div>
-  );
-
-  const cls = cn(
-    "group block w-full bg-[#010101] text-left ease-[cubic-bezier(0.16,1,0.3,1)] [transition-property:opacity,transform] [transition-duration:560ms]",
-    shown ? "opacity-100 translate-y-0" : "opacity-0 translate-y-[16px]",
-  );
-  const style = { transitionDelay: shown ? `${(index % 6) * 25}ms` : "0ms" };
-
-  return isPerson ? (
-    <Link
-      ref={revealRef}
-      href={`/person/${item.id}`}
-      className={cls}
-      style={style}
-    >
-      {body}
-    </Link>
-  ) : (
-    <button
-      ref={revealRef}
-      type="button"
-      onClick={() => onOpen(item)}
-      className={cn(cls, "cursor-pointer")}
-      style={style}
-    >
-      {body}
-    </button>
-  );
+function ResultCard({ item, onOpen }: { item: Item; onOpen: (item: Item) => void; index: number }) {
+  if (item.media_type === "person") return <article className="media-card"><Link className="media-card-art" href={`/person/${item.id}`} aria-label={`Explore ${item.name}`}>
+    {item.profile_path ? <BlurImage src={`https://image.tmdb.org/t/p/w342${item.profile_path}`} alt="" width={342} height={513} /> : <span className="media-card-fallback">{item.name}</span>}
+  </Link><div className="media-card-copy"><p className="media-card-meta">Person / {item.known_for_department || "Film & television"}</p><div className="media-card-heading"><h3><Link href={`/person/${item.id}`}>{item.name}</Link></h3></div></div></article>;
+  return <TitleCard item={{ ...item, title: item.title || item.name || "Untitled", poster_path: item.poster_path ?? null, media_type: item.media_type || "movie", date: item.release_date || item.first_air_date || "" }} onOpen={() => onOpen(item)} />;
 }
 
 function SkeletonCard() {
@@ -909,162 +427,6 @@ function SkeletonCard() {
 }
 
 const useIso = typeof window !== "undefined" ? useLayoutEffect : useEffect;
-
-/* The empty-result moment. HAL delivers the line as one full-width row that
-   never wraps: it auto-fits to the container, blooms in glyph-by-glyph behind a
-   sweeping scan edge, then settles into a slow phosphor breath. Mounts only when
-   there is nothing to show, so it always plays from the top. */
-function HalEmptyState() {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const lineRef = useRef<HTMLDivElement>(null);
-  const cursorRef = useRef<HTMLSpanElement>(null);
-
-  const chars = useMemo(
-    () =>
-      HAL_LINE.split("").map((ch, i) => (
-        <span
-          key={i}
-          data-char
-          className="inline-block [will-change:transform,filter,opacity]"
-        >
-          {ch === " " ? " " : ch}
-        </span>
-      )),
-    [],
-  );
-
-  // Fit the line to fill the row width on a single line — recomputed on resize.
-  useIso(() => {
-    const wrap = wrapRef.current;
-    const line = lineRef.current;
-    if (!wrap || !line) return;
-    const fit = () => {
-      const avail = wrap.clientWidth;
-      if (!avail) return;
-      line.style.fontSize = "100px";
-      const natural = line.scrollWidth;
-      if (natural) line.style.fontSize = `${(avail * 0.62 * 100) / natural}px`;
-    };
-    let alive = true;
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(wrap);
-    // re-measure once the mono webfont swaps in, so the line stays edge-fitted
-    document.fonts?.ready.then(() => {
-      if (alive) fit();
-    });
-    return () => {
-      alive = false;
-      ro.disconnect();
-    };
-  }, []);
-
-  useIso(() => {
-    const line = lineRef.current;
-    const cursor = cursorRef.current;
-    if (!line || !cursor) return;
-
-    const glyphs = Array.from(
-      line.querySelectorAll<HTMLElement>("[data-char]"),
-    );
-
-    const placeCursor = (n: number) => {
-      const g = n <= 0 ? glyphs[0] : glyphs[n - 1];
-      if (!g) return;
-      cursor.style.left = `${n <= 0 ? g.offsetLeft : g.offsetLeft + g.offsetWidth}px`;
-    };
-
-    gsap.set(glyphs, { opacity: 0, filter: "blur(14px)", y: 8 });
-    gsap.set(cursor, { opacity: 1 });
-    placeCursor(0);
-
-    if (prefersReducedMotion()) {
-      gsap.set(glyphs, { opacity: 1, filter: "blur(0px)", y: 0 });
-      placeCursor(glyphs.length);
-      return;
-    }
-
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-
-    const charDelay = (ch: string) =>
-      ch === "."
-        ? 400
-        : ch === ","
-          ? 220
-          : ch === " "
-            ? 90
-            : 45 + Math.random() * 35;
-
-    let i = 0;
-    const type = () => {
-      if (cancelled) return;
-      if (i >= glyphs.length) {
-        gsap.to(cursor, { opacity: 0, duration: 0.2 });
-        return;
-      }
-      gsap.to(glyphs[i], {
-        opacity: 1,
-        filter: "blur(0px)",
-        y: 0,
-        duration: 0.5,
-        ease: "power2.out",
-      });
-      i += 1;
-      placeCursor(i);
-      timer = setTimeout(type, charDelay(HAL_LINE[i - 1]));
-    };
-
-    timer = setTimeout(type, 500);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      gsap.killTweensOf(glyphs);
-      gsap.killTweensOf(cursor);
-    };
-  }, []);
-
-  return (
-    <div className="relative overflow-hidden py-24 md:py-36">
-      {/* the dark room HAL speaks from — ambient red wash + CRT scanlines */}
-      <div
-        className="pointer-events-none absolute inset-0 z-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 55% 60% at 50% 48%, rgba(255,20,16,0.12), transparent 70%)",
-        }}
-      />
-      <div
-        className="pointer-events-none absolute inset-0 z-0 opacity-[0.15] mix-blend-overlay"
-        style={{
-          background:
-            "linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.75) 51%)",
-          backgroundSize: "100% 4px",
-        }}
-      />
-
-      <div className="relative z-10 px-5 md:px-8 lg:px-12">
-        <div ref={wrapRef} className="relative">
-          <div
-            ref={lineRef}
-            className="hal-line-breathe relative whitespace-nowrap text-center font-medium tracking-tighter font-mono text-[#ff2f22]"
-            style={{ fontSize: "60px", lineHeight: 1.06 }}
-          >
-            {chars}
-            {/* block cursor — JS parks it at the typing position */}
-            <span
-              ref={cursorRef}
-              aria-hidden
-              className="pointer-events-none absolute top-1/2 inline-block h-[0.74em] w-[0.07em] -translate-y-[54%] bg-[#ff2f22] [box-shadow:0_0_12px_rgba(255,30,20,0.95)]"
-              style={{ left: 0, opacity: 0 }}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function Hal9000Panel({
   query,
@@ -1532,72 +894,6 @@ function Hal9000Panel({
         />
       </div>
     </div>
-  );
-}
-
-/* A filter group: the app's standard micro-label (same scale as the hero's
-   "Starring" / "Created by") naming the group, then its options on the same
-   line. No boxes, no fills — the console is typography, not chrome. */
-function FilterRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex gap-4 md:gap-5">
-      <span className="w-[52px] shrink-0 pt-[7px] font-manrope text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-600">
-        {label}
-      </span>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1.5">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/* A filter option: Header-nav text states, plus the 1.5px rule the app uses
-   elsewhere to mark a current selection (hero genre picker, slide numbers).
-   The rule is always in the layout — transparent when inactive — so nothing
-   shifts as the selection moves. */
-function FilterOption({
-  active,
-  onClick,
-  tone = "default",
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  tone?: "default" | "danger";
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "group/opt flex flex-col items-stretch font-manrope text-[13px] tracking-[0.01em] transition-colors duration-200 motion-reduce:transition-none",
-        active
-          ? tone === "danger"
-            ? "font-semibold text-[#c44539]"
-            : "font-semibold text-white"
-          : "text-white/45 hover:text-white/80",
-      )}
-    >
-      {children}
-      <span
-        aria-hidden
-        className={cn(
-          "mt-[3px] h-[1.5px] rounded-full transition-colors duration-200 motion-reduce:transition-none",
-          active
-            ? tone === "danger"
-              ? "bg-[#c44539]"
-              : "bg-white"
-            : "bg-transparent group-hover/opt:bg-white/20",
-        )}
-      />
-    </button>
   );
 }
 

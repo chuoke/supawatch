@@ -1,26 +1,23 @@
-import { cache } from "react";
-import { tmdbFetch } from "@/lib/tmdb";
+import { TmdbError } from "@/lib/tmdb";
+import { getPerson } from "@/lib/person";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import JsonLd from "@/components/JsonLd";
 import PersonPageHero from "@/components/PersonPageHero";
 import PersonCredits from "@/components/PersonCredits";
 
+// Generate titles on first visit, then reuse the rendered page for an hour.
+// Unknown IDs remain routable; only a confirmed TMDB 404 is a missing title.
+export const revalidate = 3600;
+export function generateStaticParams() { return []; }
+
 interface Props {
   params: Promise<{ id: string }>;
 }
 
-/* Shared between generateMetadata and the page — one TMDB round trip. */
-const getPerson = cache((id: string) =>
-  tmdbFetch(
-    `/person/${id}`,
-    { append_to_response: "combined_credits,external_ids,images" },
-    { revalidate: 3600 },
-  ),
-);
-
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
+  if (!/^[1-9]\d{0,9}$/.test(id)) notFound();
   try {
     const p = await getPerson(id);
     const name = p.name ?? "Person";
@@ -28,7 +25,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       ? `${p.biography.slice(0, 155)}…`
       : `Filmography, biography, photos, and known-for titles for ${name} on Supawatch.`;
     const image = p.profile_path
-      ? `https://image.tmdb.org/t/p/w780${p.profile_path}`
+      ? `https://image.tmdb.org/t/p/h632${p.profile_path}`
       : undefined;
 
     return {
@@ -49,21 +46,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         images: image ? [image] : [],
       },
     };
-  } catch {
-    return { title: "Person" };
+  } catch (error) {
+    if (error instanceof TmdbError && error.status === 404) notFound();
+    return { title: "Person", robots: { index: false, follow: true } };
   }
 }
 
 export default async function PersonPage({ params }: Props) {
   const { id } = await params;
+  if (!/^[1-9]\d{0,9}$/.test(id)) notFound();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let person: any;
 
   try {
     person = await getPerson(id);
-  } catch {
-    notFound();
+  } catch (error) {
+    if (error instanceof TmdbError && error.status === 404) notFound();
+    throw error;
   }
 
   if (!person || person.success === false) notFound();
@@ -133,7 +133,7 @@ export default async function PersonPage({ params }: Props) {
       .sort((a: any, b: any) => (b.vote_average ?? 0) - (a.vote_average ?? 0))[0]
       ?.backdrop_path ?? null;
 
-  const creditsCount = castCredits.length;
+  const creditsCount = new Set([...castCredits, ...crewCredits].map(credit => `${credit.media_type}-${credit.id}`)).size;
 
   // Years active
   const allYears = [...castCredits, ...crewCredits]
@@ -180,7 +180,7 @@ export default async function PersonPage({ params }: Props) {
     name: person.name,
     description: person.biography ? person.biography.slice(0, 300) : undefined,
     image: person.profile_path
-      ? `https://image.tmdb.org/t/p/w780${person.profile_path}`
+      ? `https://image.tmdb.org/t/p/h632${person.profile_path}`
       : undefined,
     birthDate: person.birthday || undefined,
     deathDate: person.deathday || undefined,

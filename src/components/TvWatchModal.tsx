@@ -1,16 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Tv, Layers, ListVideo, MonitorPlay, Zap } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./ui/select";
-import { cn } from "@/lib/utils";
+import { RotateCw, ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import PlayerDialog from "@/components/PlayerDialog";
+import { PlaybackSelect, EmbeddedPlayer } from "@/components/PlaybackControls";
 import { recordTaste, TASTE_WEIGHT } from "@/lib/taste";
+import { recordWatch } from "@/lib/history";
 
 interface Season {
   season_number: number;
@@ -91,19 +87,6 @@ function getServerSrc(
   return `https://${s.domain}/${s.path}/${showId}/${season}/${episode}${query}`;
 }
 
-const HIDE_DELAY = 3000;
-
-/* Shared control styling — soft glass pills with leading icons. */
-const SELECT_TRIGGER =
-  "flex h-11 w-fit items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.05] px-4 font-manrope text-[13px] font-medium text-white/90 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-xl transition-all duration-200 hover:border-white/20 hover:bg-white/[0.09] focus-visible:border-white/25 focus-visible:ring-2 focus-visible:ring-white/15 data-[size=default]:h-11 data-[state=open]:border-white/25 data-[state=open]:bg-white/[0.1]";
-const SELECT_CONTENT =
-  "z-[400] min-w-[168px] rounded-xl border border-white/10 bg-[#0c0c0c]/95 p-1.5 text-white shadow-[0_24px_70px_rgba(0,0,0,0.75)] backdrop-blur-2xl";
-const SELECT_ITEM =
-  "rounded-lg py-2 font-manrope text-[13px] text-white/70 focus:bg-white/[0.1] focus:text-white data-[state=checked]:text-white";
-const TRIGGER_ICON = "size-4 shrink-0 text-white/40";
-const ICON_BTN =
-  "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/70 shadow-[0_2px_10px_rgba(0,0,0,0.35)] backdrop-blur-xl transition-all duration-200 hover:border-white/20 hover:bg-white/[0.1] hover:text-white";
-
 /* Titan (vidfast) streams live playback state to the parent window — we use it
    so the header reflects what's actually playing (e.g. after auto-next). */
 const VIDFAST_ORIGINS = [
@@ -148,12 +131,11 @@ export default function TvWatchModal({
     initialSeason ?? defaultSeason?.season_number ?? 1,
   );
   const [episode, setEpisode] = useState(initialEpisode ?? 1);
-  const [controlsVisible, setControlsVisible] = useState(true);
+  const [reload, setReload] = useState(0);
   // Live season/episode reported by the Titan player (auto-next aware).
   const [vfSeason, setVfSeason] = useState<number | null>(null);
   const [vfEpisode, setVfEpisode] = useState<number | null>(null);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Titan: trust the player's reported position; others: the app's selection.
   const displaySeason = server === "vf" ? (vfSeason ?? season) : season;
@@ -163,28 +145,38 @@ export default function TvWatchModal({
   const currentSeason = seasons.find((s) => s.season_number === displaySeason);
   const episodeCount = currentSeason?.episode_count ?? 1;
 
+  /* Permanent history, one row per episode. This tracks the *displayed*
+     position, so Titan's auto-next counts each episode it rolls into — a
+     six-episode evening records six plays, not one. recordWatch de-dupes a
+     repeat of the same episode within half an hour, which also absorbs
+     StrictMode's double-fire and a mid-episode server switch. */
   useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = "";
-      if (document.fullscreenElement)
-        document.exitFullscreen?.().catch(() => {});
-    };
-  }, []);
+    recordWatch({
+      id: showId,
+      t: "tv",
+      sn: displaySeason,
+      ep: displayEpisode,
+      n: showName,
+      p: backdropPath,
+    });
+  }, [showId, showName, backdropPath, displaySeason, displayEpisode]);
 
   /* Titan streams playback events to the parent window — keep the live
      season/episode so the header tracks auto-next / in-player navigation. */
   useEffect(() => {
-    const onMessage = ({ origin, data }: MessageEvent) => {
-      if (!VIDFAST_ORIGINS.includes(origin) || !data) return;
+    const onMessage = ({ origin, source, data }: MessageEvent) => {
+      if (server !== "vf" || !VIDFAST_ORIGINS.includes(origin) || source !== iframeRef.current?.contentWindow || !data) return;
       if (data.type !== "PLAYER_EVENT") return;
       const d = data.data;
-      if (typeof d?.season === "number") setVfSeason(d.season);
-      if (typeof d?.episode === "number") setVfEpisode(d.episode);
+      if (!Number.isInteger(d?.season) || !Number.isInteger(d?.episode)) return;
+      const reportedSeason = seasons.find(item => item.season_number === d.season);
+      if (!reportedSeason || d.episode < 1 || d.episode > reportedSeason.episode_count) return;
+      setVfSeason(d.season);
+      setVfEpisode(d.episode);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [server, seasons]);
 
   // Discard any Titan-reported position when the selection changes, so the
   // freshly chosen episode shows until the player reports its own state again.
@@ -193,209 +185,19 @@ export default function TvWatchModal({
     setVfEpisode(null);
   };
 
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (document.fullscreenElement) return; // let the browser exit fullscreen first
-        onClose();
-      } else if (e.key === "f" || e.key === "F") {
-        const el = rootRef.current;
-        if (!el) return;
-        if (document.fullscreenElement) document.exitFullscreen?.();
-        else el.requestFullscreen?.();
-      }
-    };
-    document.addEventListener("keydown", h);
-    return () => document.removeEventListener("keydown", h);
-  }, [onClose]);
-
-  const scheduleHide = () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setControlsVisible(false), HIDE_DELAY);
-  };
-
-  const handleMouseMove = () => {
-    setControlsVisible(true);
-    scheduleHide();
-  };
-
-  useEffect(() => {
-    scheduleHide();
-    return () => {
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const src = getServerSrc(server, showId, season, episode, vfSubServer);
-
-  return (
-    <div
-      ref={rootRef}
-      className="fixed inset-0 z-[300] bg-black"
-      style={{ animation: "fade-in-up 0.25s ease-out both" }}
-      onMouseMove={handleMouseMove}
-    >
-      {/* ── Iframe — full screen ── */}
-      {src ? (
-        <iframe
-          key={`${server}-${vfSubServer}-${season}-${episode}`}
-          src={src}
-          allow="autoplay; encrypted-media; fullscreen"
-          allowFullScreen
-          className="h-full w-full"
-          style={{ border: "none" }}
-        />
-      ) : (
-        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-          <Tv className="h-8 w-8 text-neutral-600" />
-          <p className="font-manrope text-[14px] text-neutral-400">
-            Select a server to start watching.
-          </p>
-        </div>
-      )}
-
-      {/* Cursor catcher — when the chrome is hidden this layer spans the screen
-          to wake it on any cursor movement (the iframe otherwise swallows the
-          events); once visible it goes pointer-transparent so the player stays
-          interactive. */}
-      <div
-        className={cn(
-          "absolute inset-0 z-[25]",
-          controlsVisible ? "pointer-events-none" : "pointer-events-auto",
-        )}
-        onMouseMove={handleMouseMove}
-        onPointerDown={handleMouseMove}
-      />
-
-      {/* ── Floating overlay header ── */}
-      <div
-        className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 z-30 transition-opacity duration-500",
-          controlsVisible ? "opacity-100" : "opacity-0",
-        )}
-      >
-        {/* Gradient scrim */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              "linear-gradient(to bottom, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.4) 55%, transparent 100%)",
-          }}
-        />
-
-        <div className="pointer-events-auto relative flex items-start justify-between gap-4 px-6 pb-10 pt-5 md:px-10 md:pt-7">
-          {/* Title + inline episode marker */}
-          <div className="min-w-0">
-            <h2 className="truncate font-manrope text-[1.25rem] font-semibold leading-tight text-white md:text-[1.6rem]">
-              {showName}
-              <span className="ml-3 tabular-nums">
-                S{displaySeason}:E{displayEpisode}
-              </span>
-            </h2>
-          </div>
-
-          {/* Controls */}
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-            {/* Season */}
-            <Select
-              value={String(displaySeason)}
-              onValueChange={(v) => {
-                setSeason(Number(v));
-                setEpisode(1);
-                resetVfPosition();
-              }}
-            >
-              <SelectTrigger className={SELECT_TRIGGER}>
-                <Layers className={TRIGGER_ICON} />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className={SELECT_CONTENT}>
-                {seasons.map((s) => (
-                  <SelectItem
-                    key={s.season_number}
-                    value={String(s.season_number)}
-                    className={SELECT_ITEM}
-                  >
-                    {s.season_number === 0
-                      ? "Specials"
-                      : `Season ${s.season_number}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Episode */}
-            <Select
-              value={String(displayEpisode)}
-              onValueChange={(v) => {
-                setSeason(displaySeason);
-                setEpisode(Number(v));
-                resetVfPosition();
-              }}
-            >
-              <SelectTrigger className={SELECT_TRIGGER}>
-                <ListVideo className={TRIGGER_ICON} />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className={`${SELECT_CONTENT} max-h-[300px]`}>
-                {Array.from({ length: episodeCount }, (_, i) => i + 1).map(
-                  (ep) => (
-                    <SelectItem
-                      key={ep}
-                      value={String(ep)}
-                      className={SELECT_ITEM}
-                    >
-                      Episode {ep}
-                    </SelectItem>
-                  ),
-                )}
-              </SelectContent>
-            </Select>
-
-            {/* Server */}
-            <Select
-              value={server}
-              onValueChange={(v) => { setServer(v as ServerId); resetVfPosition(); }}
-            >
-              <SelectTrigger className={`${SELECT_TRIGGER} ml-1`}>
-                <MonitorPlay className={TRIGGER_ICON} />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className={SELECT_CONTENT}>
-                {SERVERS.map((s) => (
-                  <SelectItem key={s.id} value={s.id} className={SELECT_ITEM}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {server === "vf" && (
-              <Select
-                value={vfSubServer}
-                onValueChange={(v) => { setVfSubServer(v as VfSubServer); resetVfPosition(); }}
-              >
-                <SelectTrigger className={SELECT_TRIGGER}>
-                  <Zap className={TRIGGER_ICON} />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className={SELECT_CONTENT}>
-                  {VF_SUB_SERVERS.map((s) => (
-                    <SelectItem key={s} value={s} className={SELECT_ITEM}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-
-            <button onClick={onClose} aria-label="Close" className={ICON_BTN}>
-              <X className="h-[18px] w-[18px]" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  function selectEpisode(nextSeason: number, nextEpisode: number) {
+    setSeason(nextSeason); setEpisode(nextEpisode); resetVfPosition();
+  }
+  const nextSeason = seasons.filter(item => item.season_number > displaySeason && item.episode_count > 0).sort((a, b) => a.season_number - b.season_number)[0];
+  const hasNext = displayEpisode < episodeCount || Boolean(nextSeason);
+  return <PlayerDialog title={showName} eyebrow={`Now showing / Season ${displaySeason} / Episode ${displayEpisode}`} description="Series player with season, episode and playback source selection." onClose={onClose}>
+    <EmbeddedPlayer key={`${src}-${reload}`} src={src} title={`Watch ${showName}, season ${season}, episode ${episode}`} backdrop={backdropPath} iframeRef={iframeRef} />
+    <footer className="screening-toolbar screening-toolbar--series"><div className="playback-settings">
+      <PlaybackSelect label="Season" value={String(displaySeason)} onValueChange={value => selectEpisode(Number(value), 1)} options={seasons.map(item => ({ value: String(item.season_number), label: item.season_number === 0 ? "Specials" : `Season ${item.season_number}` }))} />
+      <PlaybackSelect label="Episode" value={String(displayEpisode)} onValueChange={value => selectEpisode(displaySeason, Number(value))} options={Array.from({ length: episodeCount }, (_, index) => ({ value: String(index + 1), label: `Episode ${index + 1}` }))} />
+      <PlaybackSelect label="Source" value={server} onValueChange={value => { setSeason(displaySeason); setEpisode(displayEpisode); setServer(value as ServerId); resetVfPosition(); }} options={SERVERS.map(item => ({ value: item.id, label: item.name }))} />
+      {server === "vf" && <PlaybackSelect label="Connection" value={vfSubServer} onValueChange={value => { setSeason(displaySeason); setEpisode(displayEpisode); setVfSubServer(value as VfSubServer); resetVfPosition(); }} options={VF_SUB_SERVERS.map(value => ({ value, label: value }))} />}
+    </div><div className="screening-footer-actions"><Button variant="ghost" size="icon" aria-label="Reload player" onClick={() => setReload(value => value + 1)}><RotateCw /></Button><Button variant="outline" disabled={!hasNext} onClick={() => { if (displayEpisode < episodeCount) selectEpisode(displaySeason, displayEpisode + 1); else if (nextSeason) selectEpisode(nextSeason.season_number, 1); }}>Next episode<ArrowRight data-icon="inline-end" /></Button></div></footer>
+  </PlayerDialog>;
 }

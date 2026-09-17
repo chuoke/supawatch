@@ -1,0 +1,46 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+const url = code => "data:text/javascript;base64," + Buffer.from(code).toString("base64");
+const compile = path => ts.transpileModule(readFileSync(path, "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const hooks = url("export const cache = fn => fn;");
+const tmdb = url("export class TmdbError extends Error {}; export const CACHE = {}; export const tmdbFetch = () => { throw Error('Unexpected network request'); };");
+const M = await import(url(compile("src/lib/media.ts").replace('"react"', JSON.stringify(hooks)).replace('"@/lib/tmdb"', JSON.stringify(tmdb))));
+const netflix = {provider_id:8,provider_name:"Netflix",logo_path:"/netflix.png"};
+assert.deepEqual(M.pickProviderRegion({US:{flatrate:[netflix]}}, "IN"), {region:"IN",data:null,fallback:false});
+assert.equal(M.pickProviderRegion({IN:{flatrate:[netflix]}}, "IN").data.flatrate[0].provider_id,8);
+assert.equal(M.streamingProviders({flatrate:[netflix,netflix]}).length,1);
+console.log("PASS provider region never silently falls back; duplicate providers removed");
+
+const store = new Map();
+globalThis.window = {};
+globalThis.localStorage = {getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,v)};
+const historyUrl = url(compile("src/lib/history.ts"));
+const H = await import(historyUrl);
+const T = await import(url(compile("src/lib/taste.ts").replace('"@/lib/history"',JSON.stringify(historyUrl))));
+store.set("sw-taste-v1", JSON.stringify({v:1,items:null}));
+assert.equal(T.getTasteProfile(),null);
+store.set("sw-taste-v1", JSON.stringify({v:1,items:{bad:null,broken:{id:1,weight:3},valid:{id:8,media_type:"movie",title:"A film",weight:3,lastTs:Date.now(),genre_ids:"wrong"}}}));
+assert.equal(T.getTasteProfile().items.length,1);
+assert.deepEqual(T.getTasteProfile().topGenres,[]);
+T.recordTaste({id:9,media_type:"tv",title:"A series"},2);
+assert.equal(T.getTasteProfile().items.length,2);
+store.set("sw-history-v1",JSON.stringify({v:1,e:[null,{id:1,t:"movie",ts:200}, {id:"bad"}, {id:2,t:"tv",ts:100}]}));
+assert.deepEqual(H.getHistory().map(e=>e.id),[2,1]);
+console.log("PASS malformed taste/history records ignored without losing valid data");
+
+const C = await import(url(compile("src/lib/client-api.ts")));
+let rejectOld; let resolveNew; let calls=0;
+globalThis.fetch=()=>{calls++;return calls===1?new Promise((_,reject)=>{rejectOld=reject;}):new Promise(resolve=>{resolveNew=resolve;});};
+const old=C.fetchJson("/test");old.catch(()=>{});
+C.clearJsonCache("/test");
+const newer=C.fetchJson("/test");
+rejectOld(Error("Expired request failed"));
+await old.catch(()=>{});
+await new Promise(resolve=>setTimeout(resolve,0));
+const shared=C.fetchJson("/test");
+assert.equal(calls,2);
+resolveNew({ok:true,json:async()=>({newer:true})});
+assert.deepEqual(await newer,{newer:true});assert.deepEqual(await shared,{newer:true});
+console.log("PASS rejected old request cannot evict a newer cache entry");
+

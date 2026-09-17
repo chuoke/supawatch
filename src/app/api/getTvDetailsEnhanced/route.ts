@@ -8,7 +8,7 @@ export async function GET(request: Request) {
 
   try {
     const data = await getEnhancedMediaDetails("tv", id);
-    return jsonOk(data, 200, { sMaxAge: CACHE.hour, staleWhileRevalidate: CACHE.day });
+    return jsonOk(data, 200, { sMaxAge: data.partial ? 0 : CACHE.hour, staleWhileRevalidate: CACHE.day });
   } catch (e) {
     return jsonFromError(e);
   }

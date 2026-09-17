@@ -15,7 +15,7 @@ export default function MovieCastGrid({ cast }: { cast: CastMember[] }) {
           <div className="relative aspect-[2/3] w-full overflow-hidden bg-neutral-900">
             {c.profile_path ? (
               <BlurImage
-                src={`https://image.tmdb.org/t/p/w342${c.profile_path}`}
+                src={`https://image.tmdb.org/t/p/w185${c.profile_path}`}
                 alt={c.name}
                 className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
               />

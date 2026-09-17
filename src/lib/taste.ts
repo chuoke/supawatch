@@ -13,6 +13,8 @@
    store is capped so one binge can't dominate forever. All storage access
    is wrapped — private mode / SSR simply degrade to "no profile". */
 
+import { recordWatch, seedFromTaste } from "@/lib/history";
+
 export type MediaType = "movie" | "tv";
 
 export type TasteInput = {
@@ -59,8 +61,21 @@ function readStore(): Store | null {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Store;
-    if (parsed?.v !== 1 || typeof parsed.items !== "object") return null;
-    return parsed;
+    if (parsed?.v !== 1 || !parsed.items || typeof parsed.items !== "object" || Array.isArray(parsed.items)) return null;
+    const items: Store["items"] = {};
+    for (const record of Object.values(parsed.items)) {
+      if (!record || !Number.isInteger(record.id) || record.id <= 0 ||
+          (record.media_type !== "movie" && record.media_type !== "tv") ||
+          typeof record.title !== "string" || !record.title ||
+          !Number.isFinite(record.weight) || record.weight < 0 ||
+          !Number.isFinite(record.lastTs)) continue;
+      items[`${record.media_type}-${record.id}`] = {
+        ...record,
+        count: Number.isFinite(record.count) ? record.count : 1,
+        genre_ids: Array.isArray(record.genre_ids) ? record.genre_ids.filter(Number.isInteger) : [],
+      };
+    }
+    return { v: 1, items };
   } catch {
     return null;
   }
@@ -107,6 +122,25 @@ export function recordTaste(input: TasteInput, weight: number) {
   }
 
   writeStore(store);
+  window.dispatchEvent?.(new Event("sw-taste-change"));
+
+  /* A real play is also a permanent history event. Everything weaker —
+     opening a modal, landing on a detail page — stays here in the decaying
+     profile only; see src/lib/history.ts for why that line matters.
+
+     Movies only. A show isn't watched, its episodes are, and this function
+     never sees which one — so TvWatchModal records its own events keyed on
+     the episode actually playing. Recording here too would credit the whole
+     series every time someone opened episode one. */
+  if (weight >= TASTE_WEIGHT.watch && input.media_type === "movie") {
+    recordWatch({
+      id: input.id,
+      t: input.media_type,
+      g: store.items[key].genre_ids,
+      n: input.title,
+      p: store.items[key].poster_path,
+    }, now);
+  }
 }
 
 export function getTasteProfile(): TasteProfile | null {
@@ -167,4 +201,27 @@ export function getTasteProfile(): TasteProfile | null {
     recent,
     seenIds: items.map((record) => record.id),
   };
+}
+
+/**
+ * Backfill the permanent history from whatever this browser accumulated
+ * before history.ts existed. Explicit rather than a side effect of reading
+ * the profile, so the one place that cares (the stats page) triggers it and
+ * nothing else pays for it. Safe to call repeatedly — it self-flags.
+ */
+export function seedHistoryFromTaste() {
+  if (typeof window === "undefined") return;
+  const store = readStore();
+  if (!store) return;
+
+  seedFromTaste(
+    Object.values(store.items).map((record) => ({
+      id: record.id,
+      media_type: record.media_type,
+      title: record.title,
+      poster_path: record.poster_path,
+      genre_ids: record.genre_ids,
+      lastTs: record.lastTs,
+    })),
+  );
 }

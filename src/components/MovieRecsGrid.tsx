@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import MovieDetailsModal from "./MovieDetailsModal";
-import BlurImage from "@/components/BlurImage";
+import TitleCard from "@/components/discovery/TitleCard";
 import { fetchJson } from "@/lib/client-api";
 
 interface Rec {
@@ -48,32 +48,11 @@ export default function MovieRecsGrid({ recs }: { recs: Rec[] }) {
 
   return (
     <>
-      <div className="grid grid-cols-3 sm:grid-cols-6">
+      <div className="discovery-grid">
         {recs.map((r) => (
-          <button
-            key={r.id}
-            onClick={() => handleClick(r.id)}
-            disabled={loadingId === r.id}
-            className="group relative aspect-[2/3] overflow-hidden bg-neutral-900"
-          >
-            {r.poster_path ? (
-              <BlurImage
-                src={`https://image.tmdb.org/t/p/w342${r.poster_path}`}
-                alt={r.title}
-                className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center font-manrope text-[11px] text-neutral-600">
-                {r.title[0]}
-              </div>
-            )}
-            <div className="absolute inset-0 bg-black/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-            {loadingId === r.id && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-              </div>
-            )}
-          </button>
+          <div key={r.id} aria-busy={loadingId === r.id} className={loadingId === r.id ? "opacity-60" : undefined}>
+            <TitleCard item={{ ...r, title: r.title, media_type: "movie" }} onOpen={() => { if (loadingId === null) void handleClick(r.id); }} />
+          </div>
         ))}
       </div>
 

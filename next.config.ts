@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: { viewTransition: true },
+  async redirects() {
+    return [
+      { source: "/movie/:path*", destination: "/films/:path*", permanent: true },
+      { source: "/tv/:path*", destination: "/series/:path*", permanent: true },
+    ];
+  },
   // PostHog reverse proxy configuration
   async rewrites() {
     return [

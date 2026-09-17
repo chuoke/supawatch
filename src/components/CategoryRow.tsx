@@ -1,9 +1,11 @@
 "use client";
 
+import { cn } from "@/lib/utils";
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import TitleCard from "@/components/discovery/TitleCard";
 import MovieDetailsModal from "./MovieDetailsModal";
 import TvDetailsModal from "./TvDetailsModal";
 import { fetchJson } from "@/lib/client-api";
@@ -36,36 +38,6 @@ interface Props {
 
 const itemTitle = (i: Item) => i.title ?? i.name ?? "";
 const itemDate  = (i: Item) => (i.release_date ?? i.first_air_date ?? "").slice(0, 4);
-
-/* ── useReveal: fires once when the element enters the viewport ── */
-function useReveal(index: number) {
-  const [visible, setVisible] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") { queueMicrotask(() => setVisible(true)); return; }
-
-    const obs = new IntersectionObserver(
-      ([e]) => { if (e.isIntersecting) { setVisible(true); obs.disconnect(); } },
-      { threshold: 0.05 },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-
-  return {
-    ref,
-    style: {
-      opacity: visible ? 1 : 0,
-      transform: visible ? "translateY(0) scale(1)" : "translateY(18px) scale(0.96)",
-      transition: "opacity 600ms cubic-bezier(0.16,1,0.3,1), transform 600ms cubic-bezier(0.16,1,0.3,1)",
-      /* stagger only during entrance; zero it out after so hover feels instant */
-      transitionDelay: visible ? "0ms" : `${(index % 8) * 65}ms`,
-    },
-  };
-}
 
 export default function CategoryRow({
   title, subtitle, fetchUrl, variant = "portrait", seeAllHref, defaultMediaType,
@@ -108,7 +80,7 @@ export default function CategoryRow({
     if (!el) return;
     el.scrollBy({
       left: dir === "right" ? el.clientWidth * 0.78 : -el.clientWidth * 0.78,
-      behavior: "smooth",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
     });
   };
 
@@ -117,14 +89,14 @@ export default function CategoryRow({
   return (
     <div ref={rowRef} className="group/row">
       {/* ── Section header ── */}
-      <div className="flex items-end gap-3 px-5 pb-4 md:px-8 lg:px-12">
+      <div className="flex items-end gap-3 px-(--gutter) pb-4">
         {subtitle && (
           <span className="mb-[4px] font-manrope text-[10px] uppercase tracking-[0.24em] text-neutral-600">
             {subtitle}
           </span>
         )}
         <h2
-          className="font-nichrome font-black uppercase leading-[0.88] text-white tracking-tight"
+          className="font-manrope font-bold uppercase leading-[1.02] text-white tracking-tight"
           style={{ fontSize: "clamp(1.35rem, 2vw, 1.9rem)" }}
         >
           {title}
@@ -165,7 +137,7 @@ export default function CategoryRow({
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="scrollbar-hide flex overflow-x-auto px-5 py-3 md:px-8 lg:px-12"
+          className="scrollbar-hide flex overflow-x-auto px-(--gutter) py-3"
           style={{
             gap: variant === "top10" ? "0px" : "10px",
             scrollSnapType: "x proximity",
@@ -245,130 +217,15 @@ export default function CategoryRow({
   );
 }
 
-/* ─────────────────────────────────────────
-   LANDSCAPE card  (16:9 backdrop)
-───────────────────────────────────────── */
-function LandscapeCard({
-  item, index, onClick,
-}: { item: Item; index: number; title: string; year: string; onClick: () => void }) {
-  const [loaded, setLoaded] = useState(false);
-  const { ref, style } = useReveal(index);
-
-  return (
-    <div
-      ref={ref}
-      style={{ ...style, scrollSnapAlign: "start", flexShrink: 0, width: "clamp(340px, 32vw, 520px)" }}
-      className="group/card"
-    >
-      <button
-        onClick={onClick}
-        className="relative h-full w-full cursor-pointer overflow-hidden bg-neutral-900/40"
-        style={{ aspectRatio: "16/9", display: "block" }}
-      >
-        <img
-          src={`https://image.tmdb.org/t/p/w500${item.backdrop_path}`}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          onLoad={() => setLoaded(true)}
-          className={cn(
-            "h-full w-full object-cover",
-            /* transition covers opacity + blur (load), scale + brightness (hover) */
-            "transition-[transform,opacity,filter] duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)]",
-            "group-hover/card:scale-[1.07] group-hover/card:brightness-[1.07]",
-            /* de-focus: dim when another card in the row is hovered */
-            "group-hover/row:opacity-60 group-hover/card:!opacity-100",
-            loaded ? "opacity-100 blur-0" : "opacity-0 blur-md",
-          )}
-        />
-      </button>
-    </div>
-  );
+type RowCardProps = { item: Item; index: number; title: string; year: string; onClick: () => void };
+function RowCard({ item, onClick, landscape = false, rank }: RowCardProps & { landscape?: boolean; rank?: number }) {
+  return <div className="shrink-0 snap-start" style={{ width: landscape ? "clamp(280px, 30vw, 480px)" : "clamp(155px, 16vw, 240px)" }}>
+    <TitleCard item={{ ...item, title: itemTitle(item), poster_path: item.poster_path ?? null, media_type: item.media_type || "movie", date: item.release_date || item.first_air_date || "" }} onOpen={onClick} landscape={landscape} rank={rank} />
+  </div>;
 }
-
-/* ─────────────────────────────────────────
-   PORTRAIT card  (2:3 poster)
-───────────────────────────────────────── */
-function PortraitCard({
-  item, index, onClick,
-}: { item: Item; index: number; title: string; year: string; onClick: () => void }) {
-  const [loaded, setLoaded] = useState(false);
-  const { ref, style } = useReveal(index);
-
-  return (
-    <div
-      ref={ref}
-      style={{ ...style, scrollSnapAlign: "start", flexShrink: 0, width: "clamp(180px, 17vw, 260px)" }}
-      className="group/card"
-    >
-      <button
-        onClick={onClick}
-        className="block w-full cursor-pointer overflow-hidden bg-neutral-900/40"
-        style={{ aspectRatio: "2/3" }}
-      >
-        <img
-          src={`https://image.tmdb.org/t/p/w342${item.poster_path}`}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          onLoad={() => setLoaded(true)}
-          className={cn(
-            "h-full w-full object-cover",
-            "transition-[transform,opacity,filter] duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)]",
-            "group-hover/card:scale-[1.07] group-hover/card:brightness-[1.07]",
-            "group-hover/row:opacity-60 group-hover/card:!opacity-100",
-            loaded ? "opacity-100 blur-0" : "opacity-0 blur-md",
-          )}
-        />
-      </button>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────
-   TOP 10 card  (portrait + big rank number)
-───────────────────────────────────────── */
-function Top10Card({
-  item, rank, index, onClick,
-}: { item: Item; rank: number; index: number; title: string; year: string; onClick: () => void }) {
-  const [loaded, setLoaded] = useState(false);
-  const { ref, style } = useReveal(index);
-
-  return (
-    <div
-      ref={ref}
-      style={{ ...style, scrollSnapAlign: "start", flexShrink: 0, width: "clamp(200px, 19vw, 290px)" }}
-      className="group/card"
-    >
-      <button onClick={onClick} className="relative block w-full cursor-pointer text-left">
-        {/* Big rank number — behind the poster */}
-        <span
-          className="pointer-events-none absolute bottom-0 left-0 z-0 select-none font-nichrome font-black leading-[0.82] text-[#141414] transition-[color] duration-300 group-hover/card:text-[#1e1e1e] uppercase tracking-tight"
-          style={{ fontSize: "clamp(6rem, 10vw, 10rem)", WebkitTextStroke: "1.5px #262626" }}
-        >
-          {rank}
-        </span>
-        {/* Poster shifted right */}
-        <div className="relative z-10 ml-[30%] overflow-hidden bg-neutral-900/40" style={{ aspectRatio: "2/3" }}>
-          <img
-            src={`https://image.tmdb.org/t/p/w342${item.poster_path}`}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            onLoad={() => setLoaded(true)}
-            className={cn(
-              "h-full w-full object-cover",
-              "transition-[transform,opacity,filter] duration-[450ms] ease-[cubic-bezier(0.16,1,0.3,1)]",
-              "group-hover/card:scale-[1.07] group-hover/card:brightness-[1.07]",
-              "group-hover/row:opacity-60 group-hover/card:!opacity-100",
-              loaded ? "opacity-100 blur-0" : "opacity-0 blur-md",
-            )}
-          />
-        </div>
-      </button>
-    </div>
-  );
-}
+function LandscapeCard(props: RowCardProps) { return <RowCard {...props} landscape />; }
+function PortraitCard(props: RowCardProps) { return <RowCard {...props} />; }
+function Top10Card(props: RowCardProps & { rank: number }) { return <RowCard {...props} />; }
 
 /* ─────────────────────────────────────────
    SKELETON card

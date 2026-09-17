@@ -1,3 +1,4 @@
+import SmoothScroll from "@/components/SmoothScroll";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
@@ -8,6 +9,7 @@ import Footer from "@/components/Footer";
 import BottomNav from "@/components/BottomNav";
 import IntroSplash from "@/components/IntroSplash";
 import JsonLd from "@/components/JsonLd";
+import RouteTransition from "@/components/RouteTransition";
 
 const mdNichrome = localFont({
   src: [
@@ -57,20 +59,19 @@ export const viewport: Viewport = {
 
 const siteUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://supawatch.vercel.app";
 const siteDescription =
-  "Discover movies and TV series on Supawatch. Explore trailers, cast information, ratings, recommendations, and live channels in one cinematic watch guide.";
+  "Discover films and series on Supawatch. Explore trailers, cast information, ratings, recommendations, and live channels in one place.";
 
 export const metadata: Metadata = {
   title: {
-    default: "Supawatch - Movies, TV Series, Trailers & Live Channels",
+    default: "Supawatch - Films, Series, Trailers & Live Channels",
     template: "%s | Supawatch",
   },
   description: siteDescription,
-  keywords: ["movies", "TV series", "streaming", "trailers", "cast", "ratings", "live TV"],
+  keywords: ["films", "series", "streaming", "trailers", "cast", "ratings", "live TV"],
   authors: [{ name: "Supawatch" }],
   creator: "Supawatch",
   applicationName: "Supawatch",
   metadataBase: new URL(siteUrl),
-  alternates: { canonical: "/" },
   manifest: "/manifest.webmanifest",
   robots: {
     index: true,
@@ -87,13 +88,13 @@ export const metadata: Metadata = {
     type: "website",
     url: siteUrl,
     siteName: "Supawatch",
-    title: "Supawatch - Movies, TV Series, Trailers & Live Channels",
+    title: "Supawatch - Films, Series, Trailers & Live Channels",
     description: siteDescription,
     images: [{ url: "/images/space_odyssey_bg.png", alt: "Supawatch" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Supawatch - Movies, TV Series, Trailers & Live Channels",
+    title: "Supawatch - Films, Series, Trailers & Live Channels",
     description: siteDescription,
     images: ["/images/space_odyssey_bg.png"],
   },
@@ -121,6 +122,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      data-scroll-behavior="smooth"
       className={`${mdNichrome.variable} ${ronzino.variable} ${ibmPlexMono.variable} ${spaceGrotesk.variable}`}
       suppressHydrationWarning
     >
@@ -131,9 +133,10 @@ export default function RootLayout({
         <JsonLd data={siteJsonLd} />
       </head>
       <body className="flex min-h-screen flex-col">
+        <SmoothScroll />
         <IntroSplash />
         <Header />
-        <main className="flex-1 pb-20 md:pb-0">{children}</main>
+        <main className="flex-1 pb-20 lg:pb-0"><RouteTransition>{children}</RouteTransition></main>
         <Footer />
         <BottomNav />
         <Analytics />

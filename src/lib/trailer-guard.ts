@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
 /* YouTube's embed reports trouble two ways, and a region-blocked trailer can
    pick either: an explicit onError (150/101 = "blocked in your country" or
@@ -13,7 +13,7 @@ const YT_ORIGINS = ["https://www.youtube.com", "https://www.youtube-nocookie.com
 
 /* Long enough that a slow start isn't mistaken for a block — an autoplaying
    muted embed that is going to play has always begun well inside this. */
-const START_DEADLINE_MS = 8000;
+const START_DEADLINE_MS = 15000;
 
 type Message = {
   event?: string;
@@ -38,34 +38,33 @@ export function useTrailerGuard(
      one on the same hero. Adjusted during render rather than in an effect,
      which would paint the dead frame for a beat first. */
   const [verdict, setVerdict] = useState<{ key: string | null | undefined; blocked: boolean }>({ key, blocked: false });
-  const startedRef = useRef(false);
 
   if (verdict.key !== key) {
     setVerdict({ key, blocked: false });
-    startedRef.current = false;
   }
 
   const blocked = verdict.key === key && verdict.blocked;
-  const setBlocked = () => setVerdict({ key, blocked: true });
 
   useEffect(() => {
     if (!active || !key) return;
 
     const frame = iframeRef.current;
     if (!frame) return;
+    let started = false;
+    const setBlocked = () => setVerdict({ key, blocked: true });
 
     /* Ask the embed to emit player events. It ignores the request until it
        has loaded, so repeat a few times rather than racing the load. */
     const hello = () =>
       frame.contentWindow?.postMessage(
         JSON.stringify({ event: "listening", id: key }),
-        "*",
+        new URL(frame.src).origin,
       );
     hello();
     const pings = [200, 700, 1500, 3000].map((ms) => setTimeout(hello, ms));
 
     const onMessage = (e: MessageEvent) => {
-      if (!YT_ORIGINS.includes(e.origin)) return;
+      if (!YT_ORIGINS.includes(e.origin) || e.source !== frame.contentWindow) return;
       let msg: Message;
       try {
         msg = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
@@ -76,21 +75,21 @@ export function useTrailerGuard(
 
       const info = typeof msg.info === "object" ? msg.info : undefined;
 
-      if (msg.event === "onError" || typeof info?.errorCode === "number") {
+      if (msg.event === "onError" || (typeof info?.errorCode === "number" && info.errorCode > 0)) {
         setBlocked();
         return;
       }
-      /* playerState 1 = playing, 3 = buffering — either means we're fine. */
+      /* Buffering alone is not proof of playback; it can stall forever. */
       const state =
         typeof msg.info === "number" ? msg.info : info?.playerState;
-      if (state === 1 || state === 3) startedRef.current = true;
+      if (state === 1) started = true;
     };
 
     window.addEventListener("message", onMessage);
 
     /* Nothing ever started: the frame is showing YouTube's own error card. */
     const deadline = setTimeout(() => {
-      if (!startedRef.current) setBlocked();
+      if (!started) setBlocked();
     }, START_DEADLINE_MS);
 
     return () => {

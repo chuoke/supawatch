@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import ShowReel from "@/components/ShowReel";
+import Spotlight from "@/components/Spotlight";
 
 /* A reel programmed to the viewer's local clock — cartoons with morning
    coffee, blockbusters in primetime, horror after midnight. Resolved
@@ -52,7 +52,7 @@ export default function DaypartRow() {
   if (!daypart) return null;
 
   return (
-    <ShowReel
+    <Spotlight
       title={daypart.title}
       subtitle={daypart.subtitle}
       fetchUrl={daypart.url}

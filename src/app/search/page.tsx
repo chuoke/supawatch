@@ -4,11 +4,12 @@ import SearchClient from "./SearchClient";
 
 export const metadata: Metadata = {
   title: "Search",
-  description: "Search Supawatch for movies and TV series by title, genre, and audience filters.",
+  robots: { index: false, follow: true },
+  description: "Search Supawatch for films and series by title, genre, and audience filters.",
   alternates: { canonical: "/search" },
   openGraph: {
     title: "Search | Supawatch",
-    description: "Search Supawatch for movies and TV series by title, genre, and audience filters.",
+    description: "Search Supawatch for films and series by title, genre, and audience filters.",
     url: "/search",
   },
 };

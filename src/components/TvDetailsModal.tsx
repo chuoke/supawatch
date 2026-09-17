@@ -1,10 +1,15 @@
 "use client";
 
+import { useTrailerLayout } from "@/lib/useTrailerLayout";
+import { youtubeEmbedUrl } from "@/lib/youtube";
+
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import TitleCard from "@/components/discovery/TitleCard";
 import { Play, Volume2, VolumeX, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTrailerGuard } from "@/lib/trailer-guard";
+import AudienceRating from "@/components/AudienceRating";
 import TvSeasonsBrowser, { type Season } from "./TvSeasonsBrowser";
 import TvWatchModal from "./TvWatchModal";
 import { fetchJson } from "@/lib/client-api";
@@ -70,6 +75,7 @@ export default function TvDetailsModal({ show, onClose }: Props) {
   const [muted, setMuted]                   = useState(true);
   const [showWatchModal, setShowWatchModal] = useState(false);
   const [watchEp, setWatchEp] = useState<{ season: number; episode: number } | null>(null);
+  const trailerLayout = useTrailerLayout();
   const iframeRef                           = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -129,10 +135,10 @@ export default function TvDetailsModal({ show, onClose }: Props) {
   const tKey   = data?.trailerKey;
   /* A geo-blocked trailer paints YouTube's own "Video unavailable" card
      inside the frame; drop back to the backdrop still instead. */
-  const trailerBlocked = useTrailerGuard(iframeRef, showVideo, tKey);
+  const trailerBlocked = useTrailerGuard(iframeRef, showVideo && !!trailerLayout, tKey);
 
-  const tSrc   = tKey && !trailerBlocked
-    ? `https://www.youtube.com/embed/${tKey}?autoplay=1&mute=1&loop=1&playlist=${tKey}&controls=0&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&playsinline=1&disablekb=1&fs=0&enablejsapi=1&vq=hd1080`
+  const tSrc   = tKey && !trailerBlocked && trailerLayout
+    ? youtubeEmbedUrl(tKey, true)
     : null;
 
   const watchSeasons = data?.seasons.filter(s => s.season_number >= 1) ?? [];
@@ -166,6 +172,7 @@ export default function TvDetailsModal({ show, onClose }: Props) {
                   showVideo ? "animate-trailer-reveal" : "opacity-0",
                 )}>
                   <iframe
+                    referrerPolicy="strict-origin-when-cross-origin"
                     ref={iframeRef}
                     src={tSrc}
                     allow="autoplay; encrypted-media"
@@ -198,7 +205,7 @@ export default function TvDetailsModal({ show, onClose }: Props) {
                     className="mb-5 max-h-[64px] max-w-[260px] object-contain drop-shadow-[0_2px_28px_rgba(0,0,0,0.98)]"
                   />
                 ) : data !== null ? (
-                  <h2 className="mb-5 font-nichrome text-[2.1rem] font-black leading-none text-white drop-shadow-[0_2px_16px_rgba(0,0,0,0.9)] uppercase tracking-tight">
+                  <h2 className="mb-5 font-manrope text-[2.1rem] font-bold leading-none text-white drop-shadow-[0_2px_16px_rgba(0,0,0,0.9)] uppercase tracking-tight">
                     {show.name}
                   </h2>
                 ) : (
@@ -216,7 +223,7 @@ export default function TvDetailsModal({ show, onClose }: Props) {
                   </button>
 
                   <Link
-                    href={`/tv/${show.id}`}
+                    href={`/series/${show.id}`}
                     onClick={onClose}
                     aria-label="More info"
                     className="flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.08] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)] backdrop-blur-md transition-all duration-200 hover:bg-white/[0.16] hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.22)]"
@@ -263,7 +270,7 @@ export default function TvDetailsModal({ show, onClose }: Props) {
 
               {/* Meta strip */}
               <div className="mb-6 flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                <span className="font-space text-[14px] font-semibold text-[#4ade80]">★ {show.vote_average.toFixed(1)}</span>
+                <AudienceRating value={show.vote_average} />
                 {year && (
                   <>
                     <span className="text-white/[0.18]">·</span>
@@ -346,7 +353,7 @@ export default function TvDetailsModal({ show, onClose }: Props) {
                       {genres.map((g, i) => (
                         <span key={g.id}>
                           {i > 0 && <span className="text-neutral-700">, </span>}
-                          <Link href={`/movie?genre=${g.id}`} onClick={onClose} className="underline decoration-neutral-600 decoration-1 underline-offset-[3px] transition-colors duration-200 hover:text-white hover:decoration-white/50">{g.name}</Link>
+                          <Link href={`/series?genre=${g.id}`} onClick={onClose} className="underline decoration-neutral-600 decoration-1 underline-offset-[3px] transition-colors duration-200 hover:text-white hover:decoration-white/50">{g.name}</Link>
                         </span>
                       ))}
                     </p>
@@ -372,25 +379,8 @@ export default function TvDetailsModal({ show, onClose }: Props) {
               {recs.length > 0 && (
                 <div className="mt-8 border-t border-white/[0.07] pt-7">
                   <p className="mb-4 font-manrope text-[10px] uppercase tracking-[0.22em] text-neutral-500">More Like This</p>
-                  <div className="grid grid-cols-3 sm:grid-cols-4">
-                    {recs.slice(0, 8).map(r => (
-                      <Link
-                        key={r.id}
-                        href={`/tv/${r.id}`}
-                        onClick={onClose}
-                        className="group relative aspect-[2/3] overflow-hidden bg-neutral-900"
-                      >
-                        {r.poster_path
-                          ? <img
-                              src={`https://image.tmdb.org/t/p/w342${r.poster_path}`}
-                              alt={r.name}
-                              className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
-                            />
-                          : <div className="flex h-full w-full items-center justify-center font-manrope text-[11px] text-neutral-600">{r.name[0]}</div>
-                        }
-                        <div className="absolute inset-0 bg-black/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                      </Link>
-                    ))}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-4">
+                    {recs.slice(0, 8).map(r => <TitleCard key={r.id} item={{ ...r, title: r.name, media_type: "tv" }} onNavigate={onClose} />)}
                   </div>
                 </div>
               )}

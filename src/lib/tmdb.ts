@@ -1,5 +1,30 @@
 const TMDB_BASE = "https://api.themoviedb.org/3";
-const TMDB_KEY = process.env.TMDB_API_KEY ?? process.env.NEXT_PUBLIC_TMDB_API_KEY;
+// Keep credentials in the server transport. The legacy name remains supported
+// so existing deployments can migrate without an outage.
+const TMDB_KEY = (process.env.TMDB_READ_ACCESS_TOKEN ?? process.env.TMDB_API_KEY ?? process.env.NEXT_PUBLIC_TMDB_API_KEY)?.trim();
+const inFlight = new Map<string, Promise<unknown>>();
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const MAX_PENDING = 100;
+const MAX_CONCURRENT = 8;
+let active = 0;
+const waiting: (() => void)[] = [];
+
+async function withSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (active >= MAX_CONCURRENT) await new Promise<void>(resolve => waiting.push(resolve));
+  else active++;
+  try { return await work(); }
+  finally {
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
+  }
+}
+
+function retryDelay(value: string | null): number {
+  if (!value) return 300 + Math.random() * 200;
+  const seconds = Number(value);
+  return Math.max(0, Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now()) || 500;
+}
 
 export const CACHE = {
   minute: 60,
@@ -28,7 +53,7 @@ export async function tmdbFetch<T = any>(
   cache: { revalidate?: number } = { revalidate: CACHE.hour },
 ): Promise<T> {
   if (!TMDB_KEY) throw new TmdbError(500, "TMDB API key not configured");
-  if (!endpoint.startsWith("/")) {
+  if (!/^\/[a-zA-Z0-9_/-]+$/.test(endpoint) || endpoint.includes("..")) {
     throw new TmdbError(500, "Invalid TMDB endpoint");
   }
 
@@ -45,24 +70,48 @@ export async function tmdbFetch<T = any>(
     }
   });
 
-  const res = await fetch(url.toString(), {
-    headers: { accept: "application/json", Authorization: `Bearer ${TMDB_KEY}` },
-    next: { revalidate: cache.revalidate },
-    signal: AbortSignal.timeout(8000),
-  });
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (/^[a-f0-9]{32}$/i.test(TMDB_KEY)) url.searchParams.set("api_key", TMDB_KEY);
+  else headers.Authorization = `Bearer ${TMDB_KEY}`;
+  url.searchParams.sort();
+  const revalidate = cache.revalidate ?? CACHE.hour;
+  const key = `${revalidate}:${url}`;
+  const pending = inFlight.get(key);
+  if (pending) return pending as Promise<T>;
+  if (inFlight.size >= MAX_PENDING) throw new TmdbError(503, "Catalogue is busy. Please try again.");
 
-  if (!res.ok) {
-    let message = res.statusText || "TMDB request failed";
-    try {
-      const body = await res.json();
-      message = body.status_message ?? body.message ?? message;
-    } catch {
-      /* keep status text */
+  const promise = withSlot(async () => {
+    // At most two attempts; do not hammer missing titles or invalid credentials.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let delay = 400;
+      try {
+        const res = await fetch(url.toString(), {
+          headers,
+          next: { revalidate },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) return await res.json() as T;
+        delay = retryDelay(res.headers.get("Retry-After"));
+        await res.body?.cancel();
+        const error = new TmdbError(res.status, res.status === 404
+          ? "Title not found."
+          : "Catalogue is temporarily unavailable. Please try again.");
+        if (!RETRYABLE.has(res.status) || attempt === 1 || delay > 2000) throw error;
+      } catch (error) {
+        if (error instanceof TmdbError) throw error;
+        if (attempt === 1) {
+          throw new TmdbError(error instanceof Error && error.name === "TimeoutError" ? 504 : 502,
+            "Catalogue could not be reached. Please try again.");
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
-    throw new TmdbError(res.status, `TMDB ${res.status}: ${message}`);
-  }
+    throw new TmdbError(502, "Catalogue could not be reached.");
+  });
+  inFlight.set(key, promise);
+  try { return await promise; }
+  finally { if (inFlight.get(key) === promise) inFlight.delete(key); }
 
-  return res.json() as Promise<T>;
 }
 
 export function jsonOk(
@@ -76,7 +125,7 @@ export function jsonOk(
   return Response.json(data, {
     status,
     headers: {
-      "Cache-Control": `public, s-maxage=${sMaxAge}, stale-while-revalidate=${stale}`,
+      "Cache-Control": sMaxAge > 0 ? `public, max-age=0, s-maxage=${sMaxAge}, stale-while-revalidate=${stale}` : "no-store",
     },
   });
 }
@@ -93,9 +142,12 @@ export function jsonErr(msg: string, status = 500) {
 
 export function jsonFromError(error: unknown) {
   if (error instanceof TmdbError) {
-    return jsonErr(error.message, error.status >= 400 && error.status < 500 ? error.status : 502);
+    const status = error.status === 404 || error.status === 400 ? error.status
+      : error.status === 429 || error.status === 503 ? 503
+      : error.status === 504 ? 504 : 502;
+    return jsonErr(error.message, status);
   }
-  return jsonErr(error instanceof Error ? error.message : "Unexpected server error");
+  return jsonErr("Unexpected server error. Please try again.");
 }
 
 export function requirePositiveInt(value: string | null, name: string): string | Response {
@@ -159,4 +211,34 @@ const SORT_ALLOWLIST = new Set([
 
 export function sanitizeSort(value: string | null, fallback = "popularity.desc"): string {
   return value && SORT_ALLOWLIST.has(value) ? value : fallback;
+}
+
+/**
+ * Parse a "movie:27205,tv:1396" batch reference list.
+ *
+ * The stats page hydrates a whole watch library at once, so it needs to ask
+ * for many titles in one request. Capped hard: an uncapped batch is a way to
+ * turn one inbound request into a thousand outbound ones.
+ */
+export function sanitizeMediaRefs(
+  value: string | null,
+  max = 40,
+): { type: "movie" | "tv"; id: string }[] | null {
+  if (!value) return null;
+
+  const parts = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length || parts.length > max) return null;
+
+  const refs: { type: "movie" | "tv"; id: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const part of parts) {
+    const match = /^(movie|tv):([1-9]\d{0,9})$/.exec(part);
+    if (!match) return null;
+    if (seen.has(part)) continue;
+    seen.add(part);
+    refs.push({ type: match[1] as "movie" | "tv", id: match[2] });
+  }
+
+  return refs.length ? refs : null;
 }

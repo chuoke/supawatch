@@ -37,31 +37,8 @@ export default function TvEpisodeWrapper({
 
   return (
     <>
-      {/* ── EPISODE CARDS ── */}
-      <div className="px-8 pb-16 lg:px-12">
-        <div className="mx-auto max-w-[1400px]">
-          <TvEpisodeCards tvId={tvId} seasons={seasons} onWatch={openWatch} />
-        </div>
-      </div>
-
-      {/* ── EPISODES HEATMAP ── */}
-      <div className="px-8 pb-16 lg:px-12">
-        <div className="mx-auto max-w-[1400px]">
-          <div className="mb-6 flex items-center gap-4">
-            <div className="flex flex-col justify-center gap-0.5">
-              <h2 className="font-manrope text-[20px] font-semibold leading-none tracking-tight text-white/95">
-                Episodes Heatmap
-              </h2>
-            </div>
-          </div>
-          <TvSeasonsBrowser
-            tvId={tvId}
-            seasons={seasons}
-            variant="page"
-            onWatch={openWatch}
-          />
-        </div>
-      </div>
+      <section id="episodes" className="detail-episodes"><TvEpisodeCards key={tvId} tvId={tvId} seasons={seasons} onWatch={openWatch} /></section>
+      <section id="episode-ratings" className="detail-episode-ratings"><header className="detail-section-heading"><div><p className="eyebrow">The audience scorecard</p><h2>How the story holds up.</h2></div><span>Episode ratings / 10</span></header><TvSeasonsBrowser key={tvId} tvId={tvId} seasons={seasons} variant="page" onWatch={openWatch} /></section>
 
       {watchTarget && (
         <TvWatchModal

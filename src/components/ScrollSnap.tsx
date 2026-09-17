@@ -15,9 +15,18 @@ import { ScrollToPlugin } from "gsap/ScrollToPlugin";
  * Active only on large, pointer-fine viewports and disabled under
  * prefers-reduced-motion; while an overlay locks the page (`body { overflow:
  * hidden }`) the magnet stands down.
+ *
+ * `full` switches to a different animal: `.reels` goes on <html> and the CSS
+ * in globals takes over, sizing every reel to exactly one viewport and
+ * snapping hard between them. No magnet then — the browser does the snapping.
  */
-export default function ScrollSnap() {
+export default function ScrollSnap({ full = false }: { full?: boolean }) {
   useEffect(() => {
+    if (full) {
+      document.documentElement.classList.add("reels");
+      return () => document.documentElement.classList.remove("reels");
+    }
+
     gsap.registerPlugin(ScrollToPlugin);
 
     const mm = gsap.matchMedia();
@@ -118,7 +127,7 @@ export default function ScrollSnap() {
     );
 
     return () => mm.revert();
-  }, []);
+  }, [full]);
 
   return null;
 }

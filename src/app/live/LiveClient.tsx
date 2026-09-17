@@ -14,6 +14,7 @@ import { parseId3, type Id3Text } from "@/lib/id3";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -24,6 +25,13 @@ import {
   VolumeX,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Globe2,
+  Maximize,
+  RotateCw,
+  Check,
+  X,
   Plus,
   Minus,
   Info,
@@ -195,7 +203,7 @@ export default function LiveClient({
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   // Picture size: fit the whole frame (letterboxed) or fill it (cropped).
-  const [fillScreen, setFillScreen] = useState(false);
+  const [fillScreen, setFillScreen] = useState(true);
 
   /* The emitter behind the window at the tip. A real handset gives you exactly
      one piece of feedback that it fired — the LED blinks — and it blinks per
@@ -871,7 +879,7 @@ export default function LiveClient({
       ) {
         return;
       }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || el?.closest('[role="dialog"], .tv-osd-menu')) return;
       // Let a focused button handle its own Enter/Space activation natively.
       if (el?.tagName === "BUTTON" && (e.key === "Enter" || e.key === " ")) {
         return;
@@ -957,45 +965,25 @@ export default function LiveClient({
     return () => window.removeEventListener("keydown", h);
   }, []);
 
-  /* Remote materials. The page is near-black, so a mid-grey handset reads as a
-     pale slab pasted onto it. A real one is dark graphite: the body nearly as
-     black as the page, and the keys a shade above it, separated by their own
-     shadow and a hairline of light along the moulded top edge rather than by
-     being painted lighter. Legends carry the contrast instead of the plastic.
-     KEY_PRESS is separate so the coloured keys can travel on press without
-     inheriting the graphite fill. */
-  /* A key is a domed cap sitting proud of a well cut into the shell, so it
-     carries four things at once: light caught along its moulded top edge, the
-     shading of the dome falling off toward the bottom lip, its own drop shadow
-     onto the shell, and the dark line of the well around it. */
-  const KEY_SHADOW =
-    "shadow-[inset_0_1px_0_rgba(255,255,255,0.17),inset_0_-2px_3px_rgba(0,0,0,0.45),0_1px_1px_rgba(0,0,0,0.7),0_3px_6px_-1px_rgba(0,0,0,0.85)]";
-  const KEY = cn(
-    "bg-gradient-to-b from-[#3c3c45] via-[#2a2a31] to-[#1b1b20] ring-1 ring-black/75 hover:from-[#484852] hover:via-[#33333b] hover:to-[#232329]",
-    KEY_SHADOW,
-  );
-  const KEY_PRESS =
-    "transition-all duration-75 active:translate-y-[1.5px] active:brightness-[0.82] active:shadow-[inset_0_2px_5px_rgba(0,0,0,0.85),0_1px_1px_rgba(0,0,0,0.6)]";
-  /* Two-way keys are one moulded piece, so the rocker is a single shell with a
-     seam across it rather than two separate keys. */
-  const ROCKER = cn(
-    "overflow-hidden rounded-full bg-gradient-to-b from-[#3c3c45] via-[#2a2a31] to-[#1b1b20] ring-1 ring-black/75",
-    KEY_SHADOW,
-  );
-  /* Legends are printed on the shell, not the keys — dim, low contrast. */
-  const ENGRAVED =
-    "font-manrope text-[9px] font-semibold uppercase tracking-[0.18em] text-[#5d5d66]";
-  /* Every key glyph sits at one brightness so the field reads as one moulded
-     set; hover lifts the individual key rather than recolouring it. */
-  const GLYPH = "text-[#c6c6d0] transition-colors group-hover:text-white";
-
+  const remoteNavigate = (direction: number) => {
+    const menu = document.querySelector(".tv-osd-menu");
+    if (menu) {
+      const buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>("[data-menu-item]"));
+      const index = buttons.findIndex(button => button.dataset.menuFocus === "true");
+      buttons[(index + direction + buttons.length) % buttons.length]?.focus();
+    } else changeChannelRelative(direction === 1 ? -1 : 1);
+  };
+  const remoteOK = () => {
+    const focused = document.querySelector<HTMLButtonElement>('.tv-osd-menu [data-menu-focus="true"]');
+    if (focused) focused.click(); else if (typedRef.current) handleNumpad("enter"); else showCurrentInfo();
+  };
   const LABEL =
     "font-manrope text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-600";
 
   return (
-    <div className="min-h-screen w-full bg-[#010101] font-manrope text-white">
+    <div className="live-room min-h-screen w-full bg-[#010101] font-manrope text-white">
       {/* ════════════════ THE SET ════════════════ */}
-      <section className="relative w-full px-5 pb-14 pt-20 md:px-8 lg:px-12">
+      <section className="relative w-full px-(--gutter) pb-14 pt-20">
         {/* Light the screen throws onto the wall behind it */}
         <div
           aria-hidden
@@ -1016,7 +1004,7 @@ export default function LiveClient({
             bezel's height, and drops the now-playing strip into a second row
             under the set alone. fr units rather than percentages so the column
             gap comes out of the tracks instead of overflowing them. */}
-        <div className="relative grid w-full grid-cols-1 gap-10 lg:grid-cols-[83fr_17fr] lg:gap-8">
+        <div className="live-set-layout">
           {/* ── Panel ── */}
           <div className="flex w-full min-w-0 flex-col items-center">
             <div
@@ -1026,21 +1014,59 @@ export default function LiveClient({
               {/* Screen — full width, but never taller than the room left in
                   the window, so the set, stand and now-playing strip all land
                   in one viewport. Below that ceiling it is a plain 16:9 panel;
-                  above it the box goes wide and the video letterboxes inside,
-                  invisibly, since screen and bars are both black. */}
+                  above it the box goes wide. Fill crops the picture to this
+                  screen; Fit preserves the stream’s original aspect ratio. */}
               <div className="tv-screen relative aspect-video max-h-[calc(100svh_-_10.5rem)] w-full overflow-hidden rounded-[16px] bg-black">
-                <video
-                  ref={videoRef}
+                {/* The collapse rides a wrapper rather than the video itself:
+                    the CRT treatment is also an animation, and two of them on
+                    one element fight over the `animation` property. Split in
+                    two they compose — the wrapper squashes and surges, the
+                    video keeps its own scanlines.
+
+                    Both directions are driven straight off tvPower and hold
+                    their last frame, so the steady on and off states are the
+                    ends of the animations themselves. An earlier version timed
+                    a transient state out with setTimeout and the two could
+                    desync — the class cleared a frame in, cutting the collapse
+                    off before it started. */}
+                <div
                   className={cn(
-                    "h-full w-full bg-black transition-opacity duration-300",
-                    fillScreen ? "object-cover" : "object-contain",
-                    crtOn && tvPower && "crt-picture",
-                    tvPower ? "panel-wake" : "panel-sleep",
-                    isSwitching && "opacity-0",
+                    "absolute inset-0 h-full w-full",
+                    tvPower ? "crt-on-picture" : "crt-off-picture",
                   )}
-                  playsInline
-                  controls={false}
-                />
+                >
+                  <video
+                    ref={videoRef}
+                    className={cn(
+                      "h-full w-full bg-black transition-opacity duration-300",
+                      fillScreen ? "object-cover" : "object-contain",
+                      crtOn && tvPower && "crt-picture",
+                      isSwitching && "opacity-0",
+                    )}
+                    playsInline
+                    controls={false}
+                  />
+                </div>
+
+                {/* The bar of light the picture collapses into, and strikes
+                    back out of. Both animations end at zero opacity, so it is
+                    invisible at rest in either state. */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
+                >
+                  <span className="crt-beam">
+                    <span className="crt-beam-bloom">
+                      <i className={tvPower ? "crt-beam-on" : "crt-beam-off"} />
+                    </span>
+                    <span
+                      className={cn(
+                        "crt-beam-core",
+                        tvPower ? "crt-beam-on" : "crt-beam-off",
+                      )}
+                    />
+                  </span>
+                </div>
 
                 {/* Tuning — the picture resolves out of a blur */}
                 {tvPower && isSwitching && (
@@ -1053,90 +1079,48 @@ export default function LiveClient({
 
                 {/* On-screen display */}
                 {tvPower && osdLines.length > 0 && (
-                  <div className="osd-in absolute bottom-5 left-5 z-30 max-w-[80%]">
-                    {osdLines.map((line, i) => (
-                      <div
-                        key={i}
-                        className={
-                          i === 0
-                            ? "font-nichrome text-[26px] font-black uppercase leading-none tracking-tight text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.95)] sm:text-[34px]"
-                            : "mt-1.5 font-manrope text-[11px] font-semibold uppercase tracking-[0.2em] text-white/50"
-                        }
-                      >
-                        {line}
-                      </div>
-                    ))}
+                  <div className={cn("tv-osd osd-in", /^(VOL|MUTED)/.test(osdLines[0]) ? "tv-osd-volume" : "tv-osd-info")} role="status" aria-live="polite">
+                    {/^(VOL|MUTED)/.test(osdLines[0]) ? <>
+                      <div className="tv-osd-icon">{muted || volume === 0 ? <VolumeX size={22} /> : <Volume2 size={22} />}</div>
+                      <div><span className="tv-osd-caption">{muted ? "Sound muted" : "Volume"}</span><div className="tv-volume-track" role="meter" aria-label="Volume" aria-valuemin={0} aria-valuemax={100} aria-valuenow={muted ? 0 : Math.round(volume * 100)}>{Array.from({ length: 20 }, (_, i) => <i key={i} data-filled={!muted && i < Math.round(volume * 20)} />)}</div></div>
+                      <strong>{muted ? "0" : Math.round(volume * 100)}</strong>
+                    </> : <><div className="tv-channel-badge">{osdLines[0].startsWith("CH ") ? <><span>CHANNEL</span><strong>{osdLines[0].slice(3)}</strong></> : <Tv size={24} />}</div><div className="tv-osd-details"><span className="tv-osd-caption">{osdLines[0].startsWith("CH ") ? osdLines[2] ?? "Live television" : osdLines[0]}</span><strong>{osdLines[1] ?? (osdLines[0].startsWith("CH ") ? "Enter a channel number" : "Supawatch TV")}</strong>{osdLines[3] && <span>{osdLines[3]}</span>}</div></>}
                   </div>
                 )}
 
-                {/* Guide overlay — same list vocabulary as the guide below */}
+                {/* Guide overlay */}
                 {isCategoryMenuOpen && tvPower && (
-                  <div className="absolute inset-0 z-30 flex flex-col bg-[#050505]/95 backdrop-blur-xl">
-                    <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-3.5">
-                      <span className={LABEL}>Categories</span>
-                      <span className={cn(LABEL, "text-neutral-700")}>
-                        G · Esc to close
-                      </span>
-                    </div>
-                    <div className="scrollbar-hide flex-1 overflow-y-auto p-2">
-                      {categories.map((cat) => {
-                        const on = selectedCategory === cat;
-                        return (
-                          <button
-                            key={cat}
-                            onClick={() => selectCategoryFromMenu(cat)}
-                            className={cn(
-                              "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-manrope text-[13px] transition-colors duration-150",
-                              on
-                                ? "bg-white/[0.06] font-semibold text-white"
-                                : "text-white/55 hover:bg-white/[0.04] hover:text-white",
-                            )}
-                          >
-                            <span className="flex-1 truncate">{cat}</span>
-                            {on && (
-                              <span className="h-1.5 w-1.5 rounded-full bg-[#e50914]" />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <TvMenu
+                    title="Categories"
+                    exitHint="G"
+                    items={categories.map((cat) => ({
+                      key: cat,
+                      label: cat,
+                    }))}
+                    selected={selectedCategory}
+                    onSelect={selectCategoryFromMenu}
+                    onClose={() => setIsCategoryMenuOpen(false)}
+                  />
                 )}
 
                 {/* Region overlay — the guide menu's twin */}
                 {isRegionMenuOpen && tvPower && (
-                  <div className="absolute inset-0 z-30 flex flex-col bg-[#050505]/95 backdrop-blur-xl">
-                    <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-3.5">
-                      <span className={LABEL}>Region</span>
-                      <span className={cn(LABEL, "text-neutral-700")}>
-                        Esc to close
-                      </span>
-                    </div>
-                    <div className="scrollbar-hide flex-1 overflow-y-auto p-2">
-                      {regions.map((r) => {
-                        const on = selectedRegion === r.code;
-                        return (
-                          <button
-                            key={r.code}
-                            onClick={() =>
-                              selectRegionFromMenu(r.code, r.label)
-                            }
-                            className={cn(
-                              "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left font-manrope text-[13px] transition-colors duration-150",
-                              on
-                                ? "bg-white/[0.06] font-semibold text-white"
-                                : "text-white/55 hover:bg-white/[0.04] hover:text-white",
-                            )}
-                          >
-                            <span className="flex-1 truncate">{r.label}</span>
-                            {on && (
-                              <span className="h-1.5 w-1.5 rounded-full bg-[#e50914]" />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <TvMenu
+                    title="Region"
+                    exitHint="Esc"
+                    items={regions.map((r) => ({
+                      key: r.code,
+                      label: r.label,
+                    }))}
+                    selected={selectedRegion}
+                    onSelect={(code) =>
+                      selectRegionFromMenu(
+                        code,
+                        regions.find((r) => r.code === code)?.label ?? code,
+                      )
+                    }
+                    onClose={() => setIsRegionMenuOpen(false)}
+                  />
                 )}
 
                 {/* No signal */}
@@ -1198,7 +1182,7 @@ export default function LiveClient({
           {/* Now playing, under the set — with the keyboard remote opposite.
               Spans both columns so the shortcuts land on the page's right edge,
               flush with the remote, rather than stopping at the TV's edge. */}
-          <div className="flex w-full flex-wrap items-center justify-between gap-x-8 gap-y-4 lg:col-span-2 lg:row-start-2">
+          <div className="live-now-playing flex w-full flex-wrap items-center justify-between gap-x-8 gap-y-4">
             <div className="flex min-w-0 items-center gap-4">
               <span className={cn(LABEL, "shrink-0")}>Now playing</span>
               <span className="truncate font-manrope text-[15px] font-semibold tracking-[0.01em] text-white">
@@ -1216,7 +1200,7 @@ export default function LiveClient({
               {nowPlayingTrack && (
                 <>
                   <span className="h-3 w-px shrink-0 bg-white/[0.1]" />
-                  <Music className="h-3 w-3 shrink-0 text-[#e50914]" />
+                  <Music className="h-3 w-3 shrink-0 text-neutral-300" />
                   <span className="truncate font-manrope text-[13px] tracking-[0.01em] text-white/70">
                     {[nowPlayingTrack.artist, nowPlayingTrack.title]
                       .filter(Boolean)
@@ -1266,378 +1250,27 @@ export default function LiveClient({
               islands separated by whatever gap happened to be left over. */}
           {/* Clicking anywhere in the shell fired a key, so the emitter blinks
               from the container rather than from thirty separate handlers. */}
-          <div
-            onClickCapture={pulseIr}
-            className="relative mx-auto flex w-[196px] flex-col rounded-[34px] p-4 shadow-[0_2px_5px_rgba(0,0,0,0.9),0_14px_28px_-10px_rgba(0,0,0,0.95),0_48px_90px_-26px_rgba(0,0,0,1),inset_0_1px_0_rgba(255,255,255,0.13),inset_0_-2px_10px_rgba(0,0,0,0.95)] ring-1 ring-black/85 lg:col-start-2 lg:row-start-1 lg:mx-0 lg:w-auto lg:rounded-[40px] lg:p-5 xl:p-6"
-            style={{
-              backgroundImage:
-                "linear-gradient(170deg, #33333a 0%, #1e1e23 18%, #131316 46%, #0d0d10 74%, #191920 100%)",
-            }}
-          >
-            {/* Curved plastic: a sheen down the lit side, and the thin bounce
-                of light that runs up the opposite edge. Kept as one overlay so
-                the highlights sit above the body gradient but under the keys. */}
-            <span
-              aria-hidden
-              className="pointer-events-none absolute inset-0 rounded-[34px] lg:rounded-[40px]"
-              style={{
-                backgroundImage:
-                  "linear-gradient(103deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.018) 22%, transparent 42%, transparent 88%, rgba(255,255,255,0.035) 100%)",
-              }}
-            />
-
-            {/* IR window at the tip. Dark red glass when idle — the lens is
-                tinted, not black — and on a keypress the whole lens lights
-                evenly and blooms onto the surrounding shell. No emitter dot
-                behind it: a hard bright point reads as a pilot light, and what
-                you actually see on a real handset is the glass itself glowing. */}
-            <span className="relative mx-auto flex h-2 w-11 shrink-0 items-center justify-center lg:h-[9px] lg:w-12">
-              <span
-                aria-hidden
-                className={cn(
-                  "pointer-events-none absolute -inset-x-2.5 -inset-y-1.5 rounded-full bg-[#ff4a2e] blur-[6px] transition-opacity duration-200",
-                  irFiring ? "opacity-40 duration-[40ms]" : "opacity-0",
-                )}
-              />
-              <span
-                aria-hidden
-                className={cn(
-                  "relative h-full w-full rounded-full ring-1 ring-black/80 transition-all duration-200",
-                  irFiring
-                    ? "bg-[#7c2416] shadow-[inset_0_0_3px_rgba(255,124,94,0.3)] duration-[40ms]"
-                    : "bg-[#150809] shadow-[inset_0_1px_2px_rgba(0,0,0,0.95),inset_0_-1px_0_rgba(255,255,255,0.05)]",
-                )}
-              />
-            </span>
-
-            {/* The key field. The column's height tracks the set beside it,
-                which moves with the viewport, so the two big groups take that
-                slack on a flex basis and the small rows stay fixed — the field
-                fills the shell at any height instead of being centred inside it
-                with dead plastic at both ends, and it compresses rather than
-                overflowing when the set is short. */}
-            <div className="relative flex flex-1 flex-col justify-between gap-3 py-4 lg:gap-4 lg:py-5">
-              {/* Shoulder — power set apart in red, info opposite it */}
-              <div className="flex shrink-0 items-center justify-between px-0.5">
-                <button
-                  onClick={togglePower}
-                  aria-label="Power"
-                  aria-pressed={tvPower}
-                  className={cn(
-                    KEY_PRESS,
-                    "flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-b from-[#e05a44] via-[#bd3826] to-[#6f1a10] shadow-[inset_0_1px_0_rgba(255,255,255,0.38),inset_0_-3px_5px_rgba(0,0,0,0.4),0_1px_1px_rgba(0,0,0,0.7),0_4px_9px_-1px_rgba(0,0,0,0.9)] ring-1 ring-black/75 hover:from-[#ea6853] hover:via-[#c94331] lg:h-12 lg:w-12",
-                    !tvPower &&
-                      "from-[#743026] via-[#5a2018] to-[#37120d] hover:from-[#7e372c] hover:via-[#622519]",
-                  )}
-                >
-                  <Power
-                    className={cn(
-                      "h-[18px] w-[18px] transition-opacity duration-300 lg:h-5 lg:w-5",
-                      tvPower ? "text-white" : "text-white/40",
-                    )}
-                  />
-                </button>
-
-                <button
-                  onClick={showCurrentInfo}
-                  aria-label="Channel info"
-                  className={cn(
-                    KEY,
-                    KEY_PRESS,
-                    "group flex h-11 w-11 items-center justify-center rounded-full lg:h-12 lg:w-12",
-                  )}
-                >
-                  <Info
-                    className={cn(GLYPH, "h-[18px] w-[18px] lg:h-5 lg:w-5")}
-                  />
-                </button>
-              </div>
-
-              {/* Keypad — the upper key field, three columns wide. Everything
-                  below inherits these column edges. */}
-              <div className="grid min-h-[140px] flex-1 basis-[188px] grid-cols-3 grid-rows-4 gap-1.5 lg:max-h-[248px] lg:gap-2">
-                {[
-                  "1",
-                  "2",
-                  "3",
-                  "4",
-                  "5",
-                  "6",
-                  "7",
-                  "8",
-                  "9",
-                  "clear",
-                  "0",
-                  "enter",
-                ].map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => handleNumpad(k)}
-                    aria-label={
-                      k === "clear"
-                        ? "Clear"
-                        : k === "enter"
-                          ? "Enter"
-                          : `Channel ${k}`
-                    }
-                    className={cn(
-                      KEY,
-                      KEY_PRESS,
-                      "group flex h-full min-h-[30px] items-center justify-center rounded-[10px]",
-                      k === "clear" || k === "enter"
-                        ? "font-manrope text-[8px] font-semibold uppercase tracking-[0.12em] text-[#9797a1] group-hover:text-white lg:text-[9px]"
-                        : cn(GLYPH, "font-space text-[15px] tabular-nums"),
-                    )}
-                  >
-                    {k === "clear" ? "Del" : k === "enter" ? "OK" : k}
-                  </button>
-                ))}
-              </div>
-
-              {/* Rockers — volume and channel two-way keys on the outer columns,
-                  mute and guide stacked in the middle one so the cluster fills
-                  the same three-column footprint as the keypad above it. */}
-              <div className="grid min-h-[96px] flex-1 basis-[122px] grid-cols-3 items-stretch gap-1.5 lg:max-h-[176px] lg:gap-2">
-                <div className={cn(ROCKER, "flex h-full flex-col")}>
-                  <button
-                    onClick={() => changeVolume(10)}
-                    aria-label="Volume up"
-                    className="group flex flex-1 items-center justify-center rounded-t-full transition-colors active:bg-black/30"
-                  >
-                    <Plus className={cn(GLYPH, "h-4 w-4")} />
-                  </button>
-                  <span
-                    aria-hidden
-                    className="h-px w-full shrink-0 bg-black/85 shadow-[0_1px_0_rgba(255,255,255,0.09)]"
-                  />
-                  <button
-                    onClick={() => changeVolume(-10)}
-                    aria-label="Volume down"
-                    className="group flex flex-1 items-center justify-center rounded-b-full transition-colors active:bg-black/30"
-                  >
-                    <Minus className={cn(GLYPH, "h-4 w-4")} />
-                  </button>
-                </div>
-
-                <div className="flex h-full flex-col gap-1.5 lg:gap-2">
-                  <button
-                    onClick={toggleMute}
-                    aria-label={muted ? "Unmute" : "Mute"}
-                    aria-pressed={muted}
-                    className={cn(
-                      KEY,
-                      KEY_PRESS,
-                      "group flex flex-1 items-center justify-center rounded-full",
-                    )}
-                  >
-                    {muted || volume === 0 ? (
-                      <VolumeX className="h-[18px] w-[18px] text-[#e0685a] transition-colors group-hover:text-[#f08376]" />
-                    ) : (
-                      <Volume2 className={cn(GLYPH, "h-[18px] w-[18px]")} />
-                    )}
-                  </button>
-
-                  <button
-                    onClick={toggleCategoryMenu}
-                    aria-label="Guide"
-                    aria-pressed={isCategoryMenuOpen}
-                    className={cn(
-                      KEY,
-                      KEY_PRESS,
-                      "group flex flex-1 items-center justify-center rounded-full",
-                      isCategoryMenuOpen && "from-[#4a4a54] to-[#2b2b31]",
-                    )}
-                  >
-                    <LayoutGrid
-                      className={cn(
-                        "h-[18px] w-[18px] transition-colors",
-                        isCategoryMenuOpen
-                          ? "text-white"
-                          : "text-[#c6c6d0] group-hover:text-white",
-                      )}
-                    />
-                  </button>
-                </div>
-
-                <div className={cn(ROCKER, "flex h-full flex-col")}>
-                  <button
-                    onClick={() => changeChannelRelative(1)}
-                    aria-label="Channel up"
-                    className="group flex flex-1 items-center justify-center rounded-t-full transition-colors active:bg-black/30"
-                  >
-                    <ChevronUp className={cn(GLYPH, "h-4 w-4")} />
-                  </button>
-                  <span
-                    aria-hidden
-                    className="h-px w-full shrink-0 bg-black/85 shadow-[0_1px_0_rgba(255,255,255,0.09)]"
-                  />
-                  <button
-                    onClick={() => changeChannelRelative(-1)}
-                    aria-label="Channel down"
-                    className="group flex flex-1 items-center justify-center rounded-b-full transition-colors active:bg-black/30"
-                  >
-                    <ChevronDown className={cn(GLYPH, "h-4 w-4")} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Legends printed on the shell between the rockers and the keys
-                  below, naming the two columns that are only glyphs. */}
-              <div className="-mt-1 grid shrink-0 grid-cols-3 gap-1.5 text-center lg:gap-2">
-                <span className={ENGRAVED}>Vol</span>
-                <span className={ENGRAVED}>Menu</span>
-                <span className={ENGRAVED}>Ch</span>
-              </div>
-
-              {/* Function keys — the three you reach for while watching, so
-                  they get real keys rather than the coloured shortcut caps
-                  below. Capsules, matching the mute and menu keys: the shell
-                  keeps two key languages, rounded rectangles for the keypad and
-                  capsules for everything that is a function rather than a
-                  digit, which tells them apart at a glance without a third
-                  colour. They take slack along with the keypad and rockers so
-                  the bottom of the shell carries its share of the height rather
-                  than trailing off into slivers. */}
-              <div className="grid min-h-[38px] flex-1 basis-[46px] grid-cols-3 gap-1.5 lg:max-h-[58px] lg:gap-2">
-                {[
-                  {
-                    label: "Prev",
-                    icon: ArrowLeftRight,
-                    onClick: jumpToPreviousChannel,
-                    on: false,
-                  },
-                  {
-                    label: fillScreen ? "Fill" : "Fit",
-                    icon: Crop,
-                    onClick: cyclePictureSize,
-                    on: fillScreen,
-                  },
-                  {
-                    label: "Pip",
-                    icon: PictureInPicture2,
-                    onClick: togglePip,
-                    on: false,
-                  },
-                ].map(({ label, icon: Icon, onClick, on }) => (
-                  <button
-                    key={label}
-                    onClick={onClick}
-                    aria-pressed={on}
-                    className={cn(
-                      KEY,
-                      KEY_PRESS,
-                      "group flex h-full flex-col items-center justify-center gap-[3px] rounded-full font-manrope text-[8px] font-semibold uppercase tracking-[0.12em]",
-                      on
-                        ? "from-[#4a4a54] to-[#2b2b31] text-white"
-                        : "text-[#a8a8b2] group-hover:text-white",
-                    )}
-                  >
-                    <Icon className="h-[15px] w-[15px]" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Colour keys — the red/green/yellow/blue row, carrying the
-                  set-specific shortcuts the way teletext keys always have, and
-                  each earning its colour rather than being dealt one: red is
-                  the retry/action key, green go-bigger, yellow options, blue
-                  display. Each is labelled underneath, since a colour alone
-                  tells you nothing.
-
-                  They are moulded caps, not painted strips — enough height to
-                  read as pressable, with the domed shading a rubber cap gets:
-                  light along the top edge, shadow gathering under the bottom
-                  lip. */}
-              <div className="grid shrink-0 grid-cols-4 gap-1.5 lg:gap-2">
-                {[
-                  {
-                    label: "Reload",
-                    onClick: reloadCurrent,
-                    from: "#d0483a",
-                    to: "#8a2317",
-                    on: false,
-                    dim: false,
-                  },
-                  {
-                    label: "Full",
-                    onClick: goFullscreen,
-                    from: "#3fa85c",
-                    to: "#186030",
-                    on: false,
-                    dim: false,
-                  },
-                  {
-                    label: "Region",
-                    onClick: toggleRegionMenu,
-                    from: "#e8c53a",
-                    to: "#a58210",
-                    on: isRegionMenuOpen,
-                    dim: false,
-                  },
-                  /* Only CRT dims when off — it is the one key here that holds a
-                     lasting state. Region merely opens a menu, so greying it
-                     whenever that menu is shut would read as "disabled". */
-                  {
-                    label: "CRT",
-                    onClick: toggleCrt,
-                    from: "#3d7fd6",
-                    to: "#1a4784",
-                    on: crtOn,
-                    dim: !crtOn,
-                  },
-                ].map(({ label, onClick, from, to, on, dim }) => (
-                  <button
-                    key={label}
-                    onClick={onClick}
-                    aria-pressed={on}
-                    aria-label={label}
-                    className="group flex flex-col items-center gap-1.5"
-                  >
-                    <span
-                      className={cn(
-                        KEY_PRESS,
-                        "block h-6 w-full rounded-[7px] shadow-[inset_0_1px_0_rgba(255,255,255,0.42),inset_0_-3px_5px_rgba(0,0,0,0.32),0_2px_5px_rgba(0,0,0,0.85)] ring-1 ring-black/70 group-hover:brightness-110 lg:h-7",
-                        dim && "opacity-35 saturate-50",
-                      )}
-                      style={{
-                        backgroundImage: `linear-gradient(to bottom, ${from} 0%, ${from} 22%, ${to} 100%)`,
-                      }}
-                    />
-                    <span
-                      className={cn(
-                        "font-manrope text-[8px] font-semibold uppercase tracking-[0.1em] transition-colors",
-                        on
-                          ? "text-white"
-                          : "text-[#82828d] group-hover:text-white",
-                      )}
-                    >
-                      {label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Battery-door seam, the way the real shell is moulded */}
-            <span
-              aria-hidden
-              className="h-px w-full shrink-0 bg-black/60 shadow-[0_1px_0_rgba(255,255,255,0.045)]"
-            />
-          </div>
+          <aside className="tv-remote" aria-label="TV remote" onClickCapture={pulseIr}>
+            <div className="remote-emitter" data-active={irFiring} aria-hidden="true" />
+            <div className="remote-shoulder"><button className="remote-key remote-power" onClick={togglePower} aria-label="Power" aria-pressed={tvPower}><Power size={19} /></button><span className="remote-brand">SUPAWATCH<span>TELEVISION</span></span><button className="remote-key" onClick={showCurrentInfo} aria-label="Channel info"><Info size={18} /></button></div>
+            <div className="remote-numberpad">{["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "enter"].map(key => <button className="remote-key" key={key} onClick={() => handleNumpad(key)} aria-label={key === "clear" ? "Clear channel number" : key === "enter" ? "Enter channel number" : `Channel ${key}`}>{key === "clear" ? <span>DEL</span> : key === "enter" ? <span>ENTER</span> : key}</button>)}</div>
+            <div className="remote-dial"><button className="dial-up" onClick={() => remoteNavigate(-1)} aria-label="Navigate up"><ChevronUp /></button><button className="dial-left" onClick={() => changeVolume(-10)} aria-label="Lower volume"><ChevronLeft /></button><button className="dial-ok" onClick={remoteOK} aria-label="Select or show channel info">OK</button><button className="dial-right" onClick={() => changeVolume(10)} aria-label="Raise volume"><ChevronRight /></button><button className="dial-down" onClick={() => remoteNavigate(1)} aria-label="Navigate down"><ChevronDown /></button></div>
+            <div className="remote-rockers"><div className="remote-rocker"><button onClick={() => changeVolume(10)} aria-label="Volume up"><Plus size={19} /></button><span>VOL</span><button onClick={() => changeVolume(-10)} aria-label="Volume down"><Minus size={19} /></button></div><div className="remote-center-keys"><button className="remote-key" onClick={toggleMute} aria-label="Mute" aria-pressed={muted}>{muted ? <VolumeX size={18} /> : <Volume2 size={18} />}</button><button className="remote-key" onClick={toggleCategoryMenu} aria-label="Channel menu" aria-expanded={isCategoryMenuOpen}><LayoutGrid size={17} /></button><span>MENU</span></div><div className="remote-rocker"><button onClick={() => changeChannelRelative(1)} aria-label="Channel up"><ChevronUp size={20} /></button><span>CH</span><button onClick={() => changeChannelRelative(-1)} aria-label="Channel down"><ChevronDown size={20} /></button></div></div>
+            <div className="remote-functions">{[{ label: "Previous", icon: ArrowLeftRight, action: jumpToPreviousChannel }, { label: fillScreen ? "Fill" : "Fit", icon: Crop, action: cyclePictureSize }, { label: "PiP", icon: PictureInPicture2, action: togglePip }].map(({ label, icon: Icon, action }) => <button className="remote-key" key={label} onClick={action}><Icon size={16} /><span>{label}</span></button>)}</div>
+            <div className="remote-colors">{[{ label: "Reload", icon: RotateCw, action: reloadCurrent }, { label: "Full", icon: Maximize, action: goFullscreen }, { label: "Region", icon: Globe2, action: toggleRegionMenu }, { label: "CRT", icon: Tv, action: toggleCrt }].map(({ label, icon: Icon, action }, index) => <button key={label} onClick={action} aria-label={label} aria-pressed={label === "CRT" ? crtOn : undefined} aria-expanded={label === "Region" ? isRegionMenuOpen : undefined}><span className={`remote-color remote-color-${index}`}><Icon size={14} /></span><span>{label}</span></button>)}</div>
+            <div className="remote-base" aria-hidden="true"><span />SW / 01</div>
+          </aside>
         </div>
       </section>
 
       {/* ════════════════ CHANNEL GUIDE ════════════════ */}
-      <section className="w-full px-5 pb-28 md:px-8 lg:px-12">
+      <section className="channel-guide w-full px-(--gutter) pb-28">
         {/* Header */}
-        <h2 className="pb-7 font-manrope text-[20px] font-semibold leading-none tracking-tight text-white/95">
-          Channel Guide
-        </h2>
+        <header className="channel-guide-heading"><div><p className="eyebrow">Something’s always on</p><h2>Find your frequency.</h2></div><p><span className="live-dot" />{guideChannels.length} channels <span>/ {regions.find(region => region.code === selectedRegion)?.label ?? "Live TV"}</span></p></header>
 
         {/* Search — held to a readable measure, with the region beside it */}
         <div className="mb-7 flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
-          <div className="group flex min-w-[240px] max-w-[640px] flex-1 items-center gap-3 border-b border-white/[0.09] pb-2.5 transition-colors focus-within:border-white/30">
+          <div className="guide-search group flex min-w-0 max-w-[640px] flex-1 items-center gap-3">
             <Search className="h-4 w-4 shrink-0 text-white/25 transition-colors group-focus-within:text-white/60" />
             <input
               value={query}
@@ -1683,18 +1316,18 @@ export default function LiveClient({
                   sideOffset={12}
                   className="max-h-[340px] min-w-[210px] rounded-xl border-0 bg-[#0b0b0b] p-1.5 shadow-[0_28px_70px_-16px_rgba(0,0,0,0.95)] ring-1 ring-white/[0.09]"
                 >
-                  {regions.map((r) => (
+                  <SelectGroup>{regions.map((r) => (
                     <SelectItem
                       key={r.code}
                       value={r.code}
                       /* The tick is forced: the base item paints every
                          descendant on focus, and the highlighted row is always
                          focused, so an unflagged colour never lands. */
-                      className="rounded-lg px-3 py-2 font-manrope text-[13.5px] tracking-[0.01em] text-white/55 transition-colors focus:bg-white/[0.06] focus:text-white data-[state=checked]:font-semibold data-[state=checked]:text-white [&_svg]:size-3.5 [&_svg]:!text-[#e50914]"
+                      className="rounded-lg px-3 py-2 font-manrope text-[13.5px] tracking-[0.01em] text-white/55 transition-colors focus:bg-white/[0.06] focus:text-white data-[state=checked]:font-semibold data-[state=checked]:text-white [&_svg]:size-3.5 [&_svg]:!text-neutral-300"
                     >
                       {r.label}
                     </SelectItem>
-                  ))}
+                  ))}</SelectGroup>
                 </SelectContent>
               </Select>
             </div>
@@ -1771,7 +1404,7 @@ export default function LiveClient({
 
         {/* Rows — the list gains columns instead of length as the page widens,
             so a long playlist stays scannable on a wide display. */}
-        <div className="grid grid-cols-1 border-l border-t border-white/[0.08] md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div className="guide-grid">
           {guideChannels.map((channel) => {
             const num = channelNumber.get(channel.id) ?? 0;
             const isActive = currentChannel?.url === channel.url;
@@ -1782,8 +1415,9 @@ export default function LiveClient({
                  tune the channel as well as favouriting it. */
               <div
                 key={channel.id}
+                data-active={isActive}
                 className={cn(
-                  "group relative flex items-stretch border-b border-r border-white/[0.08] transition-colors duration-150",
+                  "guide-channel group relative flex items-stretch transition-colors duration-150",
                   isActive ? "bg-white/[0.05]" : "hover:bg-white/[0.03]",
                 )}
               >
@@ -1867,7 +1501,7 @@ export default function LiveClient({
                       starred ? "Remove from favourites" : "Add to favourites"
                     }
                     className={cn(
-                      "grid h-8 w-8 place-items-center rounded-full transition-colors duration-150",
+                      "grid size-11 place-items-center rounded-full transition-colors duration-150",
                       /* Unstarred stars stay faint until hover or keyboard focus,
                          so 300 rows aren't 300 competing icons — but they must
                          never be fully invisible: a touch device has no hover, and
@@ -1914,8 +1548,47 @@ export default function LiveClient({
   );
 }
 
-/* Playlist logo URLs rot — plenty 404 or hotlink-block. A dead <img> leaves an
-   empty box in the row, so fall back to the channel's initial instead. */
+/* On-screen menus keep the live picture visible and support keyboard navigation. */
+function TvMenu({
+  title,
+  items,
+  selected,
+  onSelect,
+  onClose,
+  exitHint,
+}: {
+  title: string;
+  items: { key: string; label: string }[];
+  selected: string;
+  onSelect: (key: string) => void;
+  onClose: () => void;
+  exitHint: string;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    const active = root.current?.querySelector<HTMLButtonElement>('[aria-current="true"]') ?? root.current?.querySelector<HTMLButtonElement>("[data-menu-item]");
+    active?.focus({ preventScroll: true });
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }); };
+  }, []);
+  return <div className="tv-menu-layer absolute inset-0 flex">
+    <button aria-label="Close menu" onClick={onClose} className="absolute inset-0 cursor-default bg-black/30" />
+    <div ref={root} className="tv-osd-menu tv-menu-in" role="region" aria-label={`${title} menu`} onKeyDown={event => {
+      if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+        event.preventDefault(); event.stopPropagation();
+        const buttons = Array.from(root.current?.querySelectorAll<HTMLButtonElement>("[data-menu-item]") ?? []);
+        const index = buttons.findIndex(button => button === document.activeElement);
+        buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+      }
+      if (event.key === "Escape" || event.key.toLowerCase() === exitHint.toLowerCase()) { event.preventDefault(); event.stopPropagation(); onClose(); }
+    }}>
+      <header><div><span className="tv-osd-caption">Supawatch TV</span><h3>{title === "Region" ? "Around the world" : "What’s your mood?"}</h3></div><button onClick={onClose} aria-label={`Close ${title.toLowerCase()} menu`}><X size={18} /></button></header>
+      <div className="tv-menu-options">{items.map((item, index) => <button key={item.key} data-menu-item data-menu-focus={undefined} onFocus={event => { root.current?.querySelectorAll<HTMLElement>("[data-menu-item]").forEach(button => { button.dataset.menuFocus = "false"; }); event.currentTarget.dataset.menuFocus = "true"; }} aria-current={item.key === selected ? "true" : undefined} onClick={() => onSelect(item.key)}><span>{String(index + 1).padStart(2, "0")}</span><span>{item.label}</span>{item.key === selected && <Check size={16} />}</button>)}</div>
+      <footer><span><kbd>↑ ↓</kbd> Browse</span><span><kbd>Enter</kbd> Select</span><span><kbd>{exitHint}</kbd> Close</span></footer>
+    </div>
+  </div>;
+}
+
 function ChannelLogo({ channel }: { channel: Channel }) {
   const [broken, setBroken] = useState(false);
   const usable = channel.logo && !broken;

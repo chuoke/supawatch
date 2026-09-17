@@ -1,5 +1,8 @@
 import type { MetadataRoute } from "next";
 import { CACHE, tmdbFetch } from "@/lib/tmdb";
+import { COLLECTIONS } from "@/lib/discovery";
+
+export const revalidate = 86400;
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://supawatch.vercel.app";
 
@@ -19,20 +22,21 @@ async function collectIds(endpoints: string[]): Promise<number[]> {
   const responses = await Promise.all(pages);
   const ids = new Set<number>();
   for (const res of responses) {
-    for (const item of res?.results ?? []) ids.add(item.id);
+    for (const item of res?.results ?? []) {
+      if (Number.isSafeInteger(item.id) && item.id > 0) ids.add(item.id);
+    }
   }
   return [...ids];
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const now = new Date();
 
   const staticEntries: MetadataRoute.Sitemap = [
-    { url: baseUrl, lastModified: now, changeFrequency: "daily", priority: 1 },
-    { url: `${baseUrl}/movie`, lastModified: now, changeFrequency: "daily", priority: 0.9 },
-    { url: `${baseUrl}/tv`, lastModified: now, changeFrequency: "daily", priority: 0.9 },
-    { url: `${baseUrl}/search`, lastModified: now, changeFrequency: "weekly", priority: 0.7 },
-    { url: `${baseUrl}/live`, lastModified: now, changeFrequency: "weekly", priority: 0.7 },
+    { url: baseUrl, changeFrequency: "daily", priority: 1 },
+    { url: `${baseUrl}/films`, changeFrequency: "daily", priority: 0.9 },
+    { url: `${baseUrl}/series`, changeFrequency: "daily", priority: 0.9 },
+    { url: `${baseUrl}/charts`, changeFrequency: "daily", priority: 0.8 },
+    { url: `${baseUrl}/live`, changeFrequency: "weekly", priority: 0.7 },
   ];
 
   const [movieIds, tvIds] = await Promise.all([
@@ -41,18 +45,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ]);
 
   const movieEntries: MetadataRoute.Sitemap = movieIds.map((id) => ({
-    url: `${baseUrl}/movie/${id}`,
-    lastModified: now,
+    url: `${baseUrl}/films/${id}`,
     changeFrequency: "weekly",
     priority: 0.6,
   }));
 
   const tvEntries: MetadataRoute.Sitemap = tvIds.map((id) => ({
-    url: `${baseUrl}/tv/${id}`,
-    lastModified: now,
+    url: `${baseUrl}/series/${id}`,
     changeFrequency: "weekly",
     priority: 0.6,
   }));
 
-  return [...staticEntries, ...movieEntries, ...tvEntries];
+  const collections: MetadataRoute.Sitemap = ["", ...COLLECTIONS.map(collection => `/${collection.slug}`)].map(path => ({ url: `${baseUrl}/collections${path}`, changeFrequency: "weekly", priority: 0.8 }));
+  return [...staticEntries, ...collections, ...movieEntries, ...tvEntries];
 }

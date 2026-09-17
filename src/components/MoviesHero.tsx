@@ -1,5 +1,8 @@
 "use client";
 
+import { useTrailerLayout } from "@/lib/useTrailerLayout";
+import { youtubeEmbedUrl } from "@/lib/youtube";
+
 import {
   useState,
   useEffect,
@@ -8,6 +11,7 @@ import {
   useTransition,
 } from "react";
 import Link from "next/link";
+import AudienceRating from "@/components/AudienceRating";
 import { useRouter } from "next/navigation";
 import { Play, Volume2, VolumeX, Info } from "lucide-react";
 import WatchModal from "./WatchModal";
@@ -16,6 +20,7 @@ import { GENRE_LIST, GENRE_NAMES } from "@/lib/genres";
 import { cn, heroTitleSize } from "@/lib/utils";
 import { useTrailerGuard } from "@/lib/trailer-guard";
 import { fetchJson } from "@/lib/client-api";
+import { useWatchProviders } from "@/lib/useWatchProviders";
 
 const SLIDE_MS = 40000;
 
@@ -83,12 +88,6 @@ interface CastMember {
   profile_path: string | null;
 }
 
-interface WatchProvider {
-  provider_id: number;
-  provider_name: string;
-  logo_path: string;
-}
-
 interface Enriched {
   logo: string | null;
   logoFetched: boolean;
@@ -99,10 +98,6 @@ interface Enriched {
   directorId: number | null;
 }
 
-interface ProvidersInfo {
-  list: WatchProvider[];
-  link: string | null;
-}
 
 interface Props {
   initialMovies: Movie[];
@@ -111,12 +106,14 @@ interface Props {
 }
 
 export default function MoviesHero({ initialMovies, genreId }: Props) {
+  const trailerLayout = useTrailerLayout();
   const router = useRouter();
   /* Read straight from props: this list changes when the genre filter
      navigates, and holding it in state would pin the hero to whatever the
      first render happened to receive. The page guarantees it is non-empty. */
   const movies = initialMovies.length ? initialMovies : NO_MOVIES;
   const [idx, setIdx] = useState(0);
+  const { providers, providersLink } = useWatchProviders(movies[idx]?.id, "movie");
   /* Previous backdrop stays mounted underneath so a slide change dissolves
      instead of cutting to black for an instant. */
   const [bgFrontId, setBgFrontId] = useState<number | null>(null);
@@ -126,23 +123,18 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
   const [enriched, setEnriched] = useState<Record<number, Enriched>>({});
   const [showVideo, setShowVideo] = useState(false);
   const [muted, setMuted] = useState(true);
-  const [providersCache, setProvidersCache] = useState<
-    Record<number, ProvidersInfo>
-  >({});
-  const [region, setRegion] = useState("US");
   const [showWatch, setShowWatch] = useState(false);
   const [pending, startTransition] = useTransition();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const enrichRequested = useRef(new Set<number>());
   useEffect(() => {
-    fetchJson<{ region?: string }>("/api/getRegion", { ttlMs: 60 * 1000 })
-      .then(({ region: r }) => setRegion(r ?? "US"))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    movies.forEach(({ id }) => {
+    const targets = [movies[idx], movies[(idx + 1) % movies.length]].filter(
+      item => item && !enrichRequested.current.has(item.id),
+    );
+    targets.forEach(({ id }) => {
+      enrichRequested.current.add(id);
       fetchJson(`/api/getMovieDetailsEnhanced?id=${id}`)
         .then((res) => {
           const directorEntry = (res.credits?.crew ?? []).find(
@@ -162,7 +154,8 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
             },
           }));
         })
-        .catch(() =>
+        .catch(() => {
+          enrichRequested.current.delete(id);
           setEnriched((p) => ({
             ...p,
             [id]: {
@@ -174,10 +167,10 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
               director: null,
               directorId: null,
             },
-          })),
-        );
+          }));
+        });
     });
-  }, [movies]);
+  }, [movies, idx]);
 
   const goTo = useCallback((i: number) => {
     setIdx(i);
@@ -213,8 +206,8 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
      here, above the empty-list early return, so the hook order holds. */
   const trailerBlocked = useTrailerGuard(
     iframeRef,
-    showVideo,
-    activeTrailerKey,
+    showVideo && !!trailerLayout,
+    `${activeTrailerKey}:${trailerLayout}`,
   );
 
   /* ── video reveal — start the 6s countdown only once the trailer key is
@@ -228,25 +221,6 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
     };
   }, [idx, activeTrailerKey]);
 
-  useEffect(() => {
-    const movie = movies[idx];
-    if (!movie || providersCache[movie.id] !== undefined) return;
-    fetchJson(
-      `/api/getWatchProviders?id=${movie.id}&region=${region}&media_type=movie`,
-    )
-      .then((res) =>
-        setProvidersCache((p) => ({
-          ...p,
-          [movie.id]: { list: res.providers ?? [], link: res.link ?? null },
-        })),
-      )
-      .catch(() =>
-        setProvidersCache((p) => ({
-          ...p,
-          [movie.id]: { list: [], link: null },
-        })),
-      );
-  }, [movies, idx, region]);
 
   const toggleMute = () => {
     iframeRef.current?.contentWindow?.postMessage(
@@ -280,11 +254,9 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
   const rt = (info as Enriched).runtime;
   const rtStr = rt ? `${Math.floor(rt / 60)}h ${rt % 60}m` : null;
   const cast = (info as Enriched).cast ?? [];
-  const providers = providersCache[movie.id]?.list ?? [];
-  const providersLink = providersCache[movie.id]?.link ?? null;
   const tKey = (info as Enriched).trailerKey;
   const tSrc = tKey && !trailerBlocked
-    ? `https://www.youtube.com/embed/${tKey}?autoplay=1&mute=1&loop=1&playlist=${tKey}&controls=0&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&playsinline=1&disablekb=1&fs=0&enablejsapi=1&vq=hd1080`
+    ? youtubeEmbedUrl(tKey, true)
     : null;
 
   /* Genre filter is a comma-separated list — "28,27" is Action *and* Horror,
@@ -296,7 +268,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
      back — so the hero can dissolve out and back in instead of snapping. */
   const applyGenres = (next: string[]) =>
     startTransition(() =>
-      router.push(next.length ? `/movie?genre=${next.join(",")}` : "/movie"),
+      router.push(next.length ? `/films?genre=${next.join(",")}` : "/films"),
     );
 
   /* Any selected id the standard list doesn't carry (a TV genre arrived via
@@ -355,7 +327,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
         </div>
 
         {/* YouTube trailer */}
-        {tSrc && (
+        {tSrc && showVideo && trailerLayout === "desktop" && (
           <div
             className={cn(
               "absolute inset-0 z-0",
@@ -363,6 +335,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
             )}
           >
             <iframe
+              referrerPolicy="strict-origin-when-cross-origin"
               ref={iframeRef}
               src={tSrc}
               allow="autoplay; encrypted-media"
@@ -411,7 +384,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
 
         {/* Content block */}
         <div
-          className="absolute inset-x-12 bottom-0 z-20"
+          className="absolute inset-x-(--gutter) bottom-0 z-20"
           style={{
             animation: "fade-in-up 0.55s 0.1s cubic-bezier(0.16,1,0.3,1) both",
           }}
@@ -434,7 +407,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
                 <div className="h-[80px] w-[460px] animate-pulse bg-white/[0.06]" />
               ) : (
                 <h1
-                  className="max-w-[16ch] text-balance font-nichrome font-black leading-[0.88] text-white uppercase tracking-tight"
+                  className="max-w-[16ch] text-balance font-manrope font-bold leading-[1.02] text-white uppercase tracking-tight"
                   style={{
                     fontSize: heroTitleSize(movie.title),
                     textShadow:
@@ -455,9 +428,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
               animation: "fade-in-up 0.5s 0.1s cubic-bezier(0.16,1,0.3,1) both",
             }}
           >
-            <span className="flex items-center gap-1.5 font-space text-[14px] font-bold text-[#4ade80]">
-              ★ {movie.vote_average.toFixed(1)}
-            </span>
+            <AudienceRating value={movie.vote_average} prominent />
             {year && (
               <>
                 <span className="text-white/[0.22]">•</span>
@@ -483,7 +454,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
                     <span key={g.id}>
                       {i > 0 && <span className="text-neutral-500">, </span>}
                       <Link
-                        href={`/movie?genre=${g.id}`}
+                        href={`/films?genre=${g.id}`}
                         className="underline decoration-neutral-500 decoration-1 underline-offset-[3px] transition-colors hover:text-white hover:decoration-white/50"
                       >
                         {g.name}
@@ -570,7 +541,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
             <div className="h-4 w-px bg-white/[0.1]" />
 
             <Link
-              href={`/movie/${movie.id}`}
+              href={`/films/${movie.id}`}
               className="flex items-center gap-1.5 font-manrope text-[11px] font-semibold uppercase tracking-[0.2em] text-neutral-500 transition-colors duration-150 hover:text-neutral-200"
             >
               <Info className="h-3.5 w-3.5" />
@@ -764,9 +735,11 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
             />
           )}
 
-          {tSrc && showVideo && (
+          {tSrc && showVideo && trailerLayout === "mobile" && (
             <div className="absolute inset-0 animate-trailer-reveal">
               <iframe
+                referrerPolicy="strict-origin-when-cross-origin"
+                ref={iframeRef}
                 src={tSrc}
                 allow="autoplay; encrypted-media"
                 className="absolute inset-0 h-full w-full"
@@ -794,7 +767,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
             }}
           />
 
-          <div className="absolute bottom-0 left-0 right-0 px-5 pb-6 md:px-8 md:pb-8">
+          <div className="absolute bottom-0 left-0 right-0 px-(--gutter) pb-6 md:pb-8">
             {/* Progress bars */}
             <div
               key={`indicators-${idx}`}
@@ -844,7 +817,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
                   <span key={g.id} className="flex items-center gap-2.5">
                     {i > 0 && <span className="text-white/25">·</span>}
                     <Link
-                      href={`/movie?genre=${g.id}`}
+                      href={`/films?genre=${g.id}`}
                       className="font-manrope text-[9px] uppercase tracking-[0.18em] text-white/55 transition-colors hover:text-white"
                     >
                       {g.name}
@@ -866,7 +839,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
                 <div className="h-10 w-48 animate-pulse bg-white/[0.07]" />
               ) : (
                 <h1
-                  className="max-w-[16ch] text-balance font-nichrome font-black leading-[0.88] text-white uppercase tracking-tight"
+                  className="max-w-[16ch] text-balance font-manrope font-bold leading-[1.02] text-white uppercase tracking-tight"
                   style={{
                     fontSize: heroTitleSize(movie.title, "compact"),
                     textShadow: "0 2px 30px rgba(0,0,0,0.95)",
@@ -887,7 +860,7 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
                 Watch Now
               </button>
               <Link
-                href={`/movie/${movie.id}`}
+                href={`/films/${movie.id}`}
                 className="flex items-center gap-2 rounded-full border border-white/[0.22] bg-black/30 px-4 py-2.5 font-manrope text-[15px] font-semibold text-white transition-colors hover:bg-black/50"
               >
                 <Info className="h-3.5 w-3.5" />
@@ -911,11 +884,9 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
         </div>
 
         {/* Below-image */}
-        <div className="bg-[#010101] px-5 pb-5 pt-4 md:px-8 md:pb-6 md:pt-5">
+        <div className="bg-[#010101] px-(--gutter) pb-5 pt-4 md:pb-6 md:pt-5">
           <div className="mb-3 flex items-center gap-3 font-manrope text-[13px] tracking-wide text-neutral-500">
-            <span className="text-[14px] font-bold text-[#4ade80]">
-              ★ {movie.vote_average.toFixed(1)}
-            </span>
+            <AudienceRating value={movie.vote_average} prominent />
             {year && (
               <>
                 <span className="text-neutral-800">·</span>
@@ -958,11 +929,11 @@ export default function MoviesHero({ initialMovies, genreId }: Props) {
 
           {/* Starring */}
           {cast.length > 0 && (
-            <div className="mb-4 flex items-center gap-3.5">
+            <div className="mb-4 flex items-start gap-3.5">
               <span className="shrink-0 font-manrope text-[9px] font-semibold uppercase tracking-[0.2em] text-neutral-600">
                 Starring
               </span>
-              <div className="flex items-center gap-2.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-2.5">
                 {cast.map((c, i) => (
                   <Link
                     key={c.id}

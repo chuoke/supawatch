@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import MediaGrid from "@/components/MediaGrid";
-import ShowReel from "@/components/ShowReel";
-import BlurImage from "@/components/BlurImage";
+import Spotlight from "@/components/Spotlight";
+import Panorama from "@/components/Panorama";
+import TitleCard from "@/components/discovery/TitleCard";
 import { getTasteProfile, type TasteProfile } from "@/lib/taste";
 import { GENRE_NAMES } from "@/lib/genres";
 
@@ -37,20 +37,26 @@ export default function ForYou() {
     <>
       {recent.length >= 3 && <JumpBackIn items={recent} />}
 
-      {anchors.map((anchor) => (
-        <ShowReel
-          key={`anchor-${anchor.media_type}-${anchor.id}`}
-          title={`More Like ${anchor.title}`}
-          subtitle="Because You Watched"
-          fetchUrl={
-            anchor.media_type === "tv"
-              ? `/api/getTvRecommendations?id=${anchor.id}`
-              : `/api/getMovieRecommendations?id=${anchor.id}`
-          }
-          mediaType={anchor.media_type}
-          excludeIds={seenIds}
-        />
-      ))}
+      {/* The first recommendation set gets the full spotlight treatment;
+          any further anchors open as a panorama, so two of these in a row
+          don't turn into two competing hero panels. */}
+      {anchors.map((anchor, i) => {
+        const Section = i === 0 ? Spotlight : Panorama;
+        return (
+          <Section
+            key={`anchor-${anchor.media_type}-${anchor.id}`}
+            title={`More Like ${anchor.title}`}
+            subtitle="Because You Watched"
+            fetchUrl={
+              anchor.media_type === "tv"
+                ? `/api/getTvRecommendations?id=${anchor.id}`
+                : `/api/getMovieRecommendations?id=${anchor.id}`
+            }
+            mediaType={anchor.media_type}
+            excludeIds={seenIds}
+          />
+        );
+      })}
 
       {topGenreName && (
         <MediaGrid
@@ -68,8 +74,8 @@ export default function ForYou() {
 function JumpBackIn({ items }: { items: TasteProfile["recent"] }) {
   return (
     <div className="snap-section pt-16 pb-12 lg:pt-24 lg:pb-16">
-      <div className="mb-6 px-5 md:px-8 lg:px-12">
-        <div className="mx-auto flex max-w-[1400px] items-center gap-4">
+      <div className="mb-6 px-(--gutter)">
+        <div className="mx-auto flex w-full items-center gap-4">
           <div className="h-9 w-1 shrink-0 bg-[#e50914]" />
           <div className="flex flex-col justify-center gap-0.5">
             <span className="font-space text-[10px] font-bold uppercase tracking-[0.25em] text-neutral-400">
@@ -82,39 +88,13 @@ function JumpBackIn({ items }: { items: TasteProfile["recent"] }) {
         </div>
       </div>
 
-      <div className="px-5 md:px-8 lg:px-12">
-        <div className="mx-auto max-w-[1400px]">
+      <div className="px-(--gutter)">
+        <div className="mx-auto w-full">
           <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 scrollbar-hide md:gap-4">
             {items.map((item) => (
-              <Link
-                key={`${item.media_type}-${item.id}`}
-                href={`/${item.media_type}/${item.id}`}
-                className="group w-[130px] shrink-0 snap-start md:w-[150px] lg:w-[170px]"
-              >
-                <div className="relative aspect-[2/3] w-full overflow-hidden bg-neutral-900">
-                  {item.poster_path ? (
-                    <BlurImage
-                      src={`https://image.tmdb.org/t/p/w342${item.poster_path}`}
-                      alt={item.title}
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
-                    />
-                  ) : item.backdrop_path ? (
-                    <BlurImage
-                      src={`https://image.tmdb.org/t/p/w300${item.backdrop_path}`}
-                      alt={item.title}
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center font-manrope text-[11px] text-neutral-600">
-                      {item.title[0]}
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-black/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                </div>
-                <p className="mt-2 truncate font-manrope text-[12.5px] text-neutral-400 transition-colors group-hover:text-white">
-                  {item.title}
-                </p>
-              </Link>
+              <div key={`${item.media_type}-${item.id}`} className="w-[165px] shrink-0 snap-start md:w-[200px]">
+                <TitleCard item={{ ...item, poster_path: item.poster_path ?? null }} />
+              </div>
             ))}
           </div>
         </div>

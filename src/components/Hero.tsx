@@ -1,8 +1,12 @@
 "use client";
 
+import { useTrailerLayout } from "@/lib/useTrailerLayout";
+import { youtubeEmbedUrl } from "@/lib/youtube";
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
-import { Play, Volume2, VolumeX, Info, Star } from "lucide-react";
+import { Play, Volume2, VolumeX, Info } from "lucide-react";
+import AudienceRating from "./AudienceRating";
 import MovieDetailsModal from "./MovieDetailsModal";
 import TvDetailsModal from "./TvDetailsModal";
 import WatchModal from "./WatchModal";
@@ -10,6 +14,8 @@ import TvWatchModal from "./TvWatchModal";
 import { cn, heroTitleSize } from "@/lib/utils";
 import { useTrailerGuard } from "@/lib/trailer-guard";
 import { fetchJson } from "@/lib/client-api";
+import { useWatchProviders } from "@/lib/useWatchProviders";
+import { titleKey } from "@/lib/discovery";
 
 const PROVIDER_URLS: Record<number, (title: string) => string> = {
   8:   (t) => `https://www.netflix.com/search?q=${encodeURIComponent(t)}`,
@@ -101,16 +107,6 @@ interface Season {
   name: string;
 }
 
-interface WatchProvider {
-  provider_id: number;
-  provider_name: string;
-  logo_path: string;
-}
-
-interface ProvidersInfo {
-  list: WatchProvider[];
-  link: string | null;
-}
 
 interface Enriched {
   logo: string | null;
@@ -123,18 +119,16 @@ interface Enriched {
 }
 
 export default function Hero() {
+  const trailerLayout = useTrailerLayout();
   const [items, setItems] = useState<Item[]>([]);
-  const [region, setRegion] = useState("US");
-  const [enriched, setEnriched] = useState<Record<number, Enriched>>({});
+  const [enriched, setEnriched] = useState<Record<string, Enriched>>({});
   const [idx, setIdx] = useState(0);
+  const { providers, providersLink } = useWatchProviders(items[idx]?.id, items[idx]?.media_type ?? "movie");
   const [showVideo, setShowVideo] = useState(false);
   const [muted, setMuted] = useState(true);
-  const [providersCache, setProvidersCache] = useState<
-    Record<number, ProvidersInfo>
-  >({});
   const [showModal, setShowModal] = useState(false);
   const [showWatchModal, setShowWatchModal] = useState(false);
-  const [bgFrontId, setBgFrontId] = useState<number | null>(null);
+  const [bgFrontId, setBgFrontId] = useState<string | null>(null);
   const [bgFront, setBgFront] = useState<Item | null>(null);
   const [bgBack, setBgBack] = useState<Item | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -142,9 +136,6 @@ export default function Hero() {
 
   /* ── fetch trending (mixed movies + tv, refreshes daily) + region (for providers) ── */
   useEffect(() => {
-    fetchJson<{ region?: string }>("/api/getRegion", { ttlMs: 60 * 1000 })
-      .then(({ region: r }) => setRegion(r ?? "US"))
-      .catch(() => {});
 
     fetchJson<{ results?: Item[] }>("/api/getTrending")
       .then((res) => setItems((res.results ?? []).slice(0, 8)))
@@ -154,13 +145,13 @@ export default function Hero() {
   /* ── enrich — logo, trailer, cast (movie- or tv-aware) ──
         Only the active slide and the one on deck are enriched; the rest
         resolve as the carousel advances instead of 8 requests upfront. */
-  const enrichRequested = useRef<Set<number>>(new Set());
+  const enrichRequested = useRef<Set<string>>(new Set());
   useEffect(() => {
     const targets = [items[idx], items[(idx + 1) % items.length]].filter(
-      (t): t is Item => Boolean(t) && !enrichRequested.current.has(t.id),
+      (t): t is Item => Boolean(t) && !enrichRequested.current.has(titleKey(t)),
     );
     targets.forEach(({ id, media_type }) => {
-      enrichRequested.current.add(id);
+      enrichRequested.current.add(titleKey({ id, media_type }));
       const endpoint =
         media_type === "tv"
           ? "getTvDetailsEnhanced"
@@ -169,7 +160,7 @@ export default function Hero() {
         .then((res) =>
           setEnriched((p) => ({
             ...p,
-            [id]: {
+            [titleKey({ id, media_type })]: {
               logo: res.logo ?? null,
               logoFetched: true,
               trailerKey: res.trailerKey ?? null,
@@ -192,7 +183,7 @@ export default function Hero() {
         .catch(() =>
           setEnriched((p) => ({
             ...p,
-            [id]: {
+            [titleKey({ id, media_type })]: {
               logo: null,
               logoFetched: true,
               trailerKey: null,
@@ -221,7 +212,7 @@ export default function Hero() {
 
   /* current slide's trailer key — null until enrichment resolves */
   const activeTrailerKey = items[idx]
-    ? (enriched[items[idx].id]?.trailerKey ?? null)
+    ? (enriched[titleKey(items[idx])]?.trailerKey ?? null)
     : null;
 
   /* ── video reveal — start the 6s countdown only once the trailer key is
@@ -236,26 +227,6 @@ export default function Hero() {
   }, [idx, activeTrailerKey]);
 
   /* ── watch providers (lazy, cached per item) ── */
-  useEffect(() => {
-    const item = items[idx];
-    if (!item || providersCache[item.id] !== undefined) return;
-    fetchJson(
-      `/api/getWatchProviders?id=${item.id}&region=${region}&media_type=${item.media_type}`,
-    )
-      .then((res) =>
-        setProvidersCache((p) => ({
-          ...p,
-          [item.id]: { list: res.providers ?? [], link: res.link ?? null },
-        })),
-      )
-      .catch(() =>
-        setProvidersCache((p) => ({
-          ...p,
-          [item.id]: { list: [], link: null },
-        })),
-      );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, idx, region]);
 
   /* ── mute toggle ── */
   const toggleMute = () => {
@@ -270,34 +241,7 @@ export default function Hero() {
     setMuted((m) => !m);
   };
 
-  /* ── force HD quality via postMessage once player is ready / playing ── */
-  useEffect(() => {
-    const forceHD = () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({
-          event: "command",
-          func: "setPlaybackQualityRange",
-          args: ["hd1080", "hd1080"],
-        }),
-        "*",
-      );
-    };
-    const onMessage = (e: MessageEvent) => {
-      try {
-        const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
-        if (
-          d.event === "onReady" ||
-          (d.event === "onStateChange" && d.info === 1)
-        ) {
-          forceHD();
-        }
-      } catch {
-        /* non-YT messages, ignore */
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
+
 
   /* ── pause trailer while any modal is open; resume when closed ── */
   useEffect(() => {
@@ -313,14 +257,14 @@ export default function Hero() {
 
   /* keep the previous backdrop mounted underneath so the new one crossfades in over it
      instead of cutting to black for an instant */
-  if (item && item.id !== bgFrontId) {
+  if (item && titleKey(item) !== bgFrontId) {
     setBgBack(bgFront);
     setBgFront(item);
-    setBgFrontId(item.id);
+    setBgFrontId(titleKey(item));
   }
 
   const info = item
-    ? (enriched[item.id] ?? ({} as Partial<Enriched>))
+    ? (enriched[titleKey(item)] ?? ({} as Partial<Enriched>))
     : ({} as Partial<Enriched>);
   const genreMap = item?.media_type === "tv" ? TV_GENRE_MAP : GENRE_MAP;
   const genres = (item?.genre_ids.slice(0, 3) ?? [])
@@ -339,23 +283,21 @@ export default function Hero() {
         ? `${Math.floor(rt / 60)}h ${rt % 60}m`
         : null;
   const cast = (info as Enriched).cast ?? [];
-  const providers = item ? (providersCache[item.id]?.list ?? []) : [];
-  const providersLink = item ? (providersCache[item.id]?.link ?? null) : null;
   const tKey = (info as Enriched).trailerKey;
   /* A geo-blocked trailer paints YouTube's own "Video unavailable" card
      inside the frame; drop back to the backdrop still instead. */
-  const trailerBlocked = useTrailerGuard(iframeRef, showVideo, tKey);
+  const trailerBlocked = useTrailerGuard(iframeRef, showVideo && !!trailerLayout, `${tKey}:${trailerLayout}`);
 
   const tSrc = tKey && !trailerBlocked
-    ? `https://www.youtube.com/embed/${tKey}?autoplay=1&mute=1&loop=1&playlist=${tKey}&controls=0&showinfo=0&rel=0&iv_load_policy=3&modestbranding=1&playsinline=1&disablekb=1&fs=0&enablejsapi=1&vq=hd1080`
+    ? youtubeEmbedUrl(tKey, true)
     : null;
 
   /* ── skeleton ── */
   if (!item)
     return (
       <>
-        <section className="relative hidden h-screen overflow-hidden bg-[#010101] lg:block">
-          <div className="absolute inset-x-12 bottom-0">
+        <section data-reel-hero className="relative hidden h-screen overflow-hidden bg-[#010101] lg:block">
+          <div className="absolute inset-x-(--gutter) bottom-0">
             {[1, 2, 3, 4].map((n) => (
               <div
                 key={n}
@@ -374,7 +316,7 @@ export default function Hero() {
             className="animate-pulse bg-neutral-900/40"
             style={{ height: "72vh", minHeight: "500px" }}
           />
-          <div className="bg-[#010101] px-5 py-5">
+          <div className="bg-[#010101] px-(--gutter) py-5">
             <div className="mb-3 h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
             <div className="mb-4 h-9 w-52 animate-pulse rounded bg-white/[0.07]" />
             <div className="mb-2 h-3 w-full animate-pulse rounded bg-white/[0.05]" />
@@ -387,10 +329,10 @@ export default function Hero() {
   return (
     <>
       {/* ══════════════════  DESKTOP  ══════════════════ */}
-      <section className="relative hidden h-screen overflow-hidden lg:block">
+      <section data-reel-hero className="relative hidden h-screen overflow-hidden lg:block">
         {/* Backdrop — cinematic cross-dissolve: the new frame blooms in over the
             previous one as it eases back into a soft, dim blur */}
-        <div className="absolute inset-0 overflow-hidden">
+        <div data-intro-image className="absolute inset-0 overflow-hidden">
           {bgBack && (
             <img
               key={`bgback-${bgBack.id}`}
@@ -419,7 +361,7 @@ export default function Hero() {
         </div>
 
         {/* YouTube trailer */}
-        {tSrc && (
+        {tSrc && showVideo && trailerLayout === "desktop" && (
           <div
             className={cn(
               "absolute inset-0",
@@ -427,6 +369,7 @@ export default function Hero() {
             )}
           >
             <iframe
+              referrerPolicy="strict-origin-when-cross-origin"
               ref={iframeRef}
               src={tSrc}
               allow="autoplay; encrypted-media"
@@ -475,7 +418,8 @@ export default function Hero() {
 
         {/* ── Content block ── */}
         <div
-          className="absolute inset-x-12 bottom-0"
+          data-intro-content
+          className="absolute inset-x-(--gutter) bottom-0"
           style={{
             animation: "fade-in-up 0.55s 0.1s cubic-bezier(0.16,1,0.3,1) both",
           }}
@@ -498,7 +442,7 @@ export default function Hero() {
               <div className="h-[80px] w-[460px] animate-pulse bg-white/[0.06]" />
             ) : (
               <h1
-                className="max-w-[16ch] text-balance font-nichrome font-black leading-[0.88] text-white uppercase tracking-tight"
+                className="max-w-[16ch] text-balance font-manrope font-bold leading-[1.02] text-white uppercase tracking-tight"
                 style={{
                   fontSize: heroTitleSize(title),
                   textShadow:
@@ -530,10 +474,7 @@ export default function Hero() {
               animation: "fade-in-up 0.5s 0.1s cubic-bezier(0.16,1,0.3,1) both",
             }}
           >
-            <span className="flex items-center gap-1.5 font-space text-[14px] font-bold text-[#4ade80]">
-              <Star className="h-3 w-3 fill-[#4ade80]" />
-              {item.vote_average.toFixed(1)}
-            </span>
+            <AudienceRating value={item.vote_average} prominent />
 
             {year && (
               <>
@@ -562,7 +503,7 @@ export default function Hero() {
                     <span key={g.id}>
                       {i > 0 && <span className="text-neutral-400">, </span>}
                       <Link
-                        href={`/movie?genre=${g.id}`}
+                        href={`/films?genre=${g.id}`}
                         className="underline decoration-neutral-500 decoration-1 underline-offset-[3px] transition-colors hover:text-white hover:decoration-white/50"
                       >
                         {g.name}
@@ -611,8 +552,8 @@ export default function Hero() {
               <Link
                 href={
                   item.media_type === "tv"
-                    ? `/tv/${item.id}`
-                    : `/movie/${item.id}`
+                    ? `/series/${item.id}`
+                    : `/films/${item.id}`
                 }
                 className="font-manrope text-[13px] font-medium text-neutral-400 transition-colors hover:text-white"
                 style={{ textShadow: "0 1px 10px rgba(0,0,0,0.9)" }}
@@ -818,6 +759,7 @@ export default function Hero() {
       <section className="relative lg:hidden">
         {/* ─── Full-bleed image wrapper ─── */}
         <div
+          data-intro-image
           className="relative overflow-hidden"
           style={{ height: "72vh", minHeight: "500px" }}
         >
@@ -832,9 +774,11 @@ export default function Hero() {
           />
 
           {/* Trailer */}
-          {tSrc && showVideo && (
+          {tSrc && showVideo && trailerLayout === "mobile" && (
             <div className="absolute inset-0 animate-trailer-reveal">
               <iframe
+                referrerPolicy="strict-origin-when-cross-origin"
+                ref={iframeRef}
                 src={tSrc}
                 allow="autoplay; encrypted-media"
                 className="absolute inset-0 h-full w-full"
@@ -867,7 +811,7 @@ export default function Hero() {
 
 
           {/* ─── Bottom content overlay ─── */}
-          <div className="absolute bottom-0 left-0 right-0 px-5 pb-6 md:px-8 md:pb-8">
+          <div className="absolute bottom-0 left-0 right-0 px-(--gutter) pb-6 md:pb-8">
             {/* Slide progress bars */}
             <div
               key={`indicators-${idx}`}
@@ -908,7 +852,7 @@ export default function Hero() {
                   <span key={g.id} className="flex items-center gap-2.5">
                     {i > 0 && <span className="text-white/25">·</span>}
                     <Link
-                      href={`/movie?genre=${g.id}`}
+                      href={`/films?genre=${g.id}`}
                       className="font-manrope text-[9px] uppercase tracking-[0.18em] text-white/55 transition-colors hover:text-white"
                     >
                       {g.name}
@@ -930,7 +874,7 @@ export default function Hero() {
                 <div className="h-10 w-48 animate-pulse bg-white/[0.07]" />
               ) : (
                 <h1
-                  className="max-w-[16ch] text-balance font-nichrome font-black leading-[0.88] text-white uppercase tracking-tight"
+                  className="max-w-[16ch] text-balance font-manrope font-bold leading-[1.02] text-white uppercase tracking-tight"
                   style={{
                     fontSize: heroTitleSize(title, "compact"),
                     textShadow: "0 2px 30px rgba(0,0,0,0.95)",
@@ -976,12 +920,10 @@ export default function Hero() {
         </div>
 
         {/* ─── Below-image content ─── */}
-        <div className="bg-[#010101] px-5 pb-5 pt-4 md:px-8 md:pb-6 md:pt-5">
+        <div className="bg-[#010101] px-(--gutter) pb-5 pt-4 md:pb-6 md:pt-5">
           {/* Meta strip */}
           <div className="mb-3 flex items-center gap-3 font-manrope text-[13px] tracking-wide text-neutral-500">
-            <span className="text-[14px] font-bold text-[#4ade80]">
-              ★ {item.vote_average.toFixed(1)}
-            </span>
+            <AudienceRating value={item.vote_average} />
             {year && (
               <>
                 <span className="text-neutral-800">·</span>

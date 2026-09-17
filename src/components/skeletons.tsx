@@ -11,8 +11,8 @@ function Sk({ className }: { className?: string }) {
 /* Matches the MediaGrid / ShowReel section header: red bar + eyebrow + title. */
 function SectionHeaderSkeleton() {
   return (
-    <div className="mb-6 px-5 md:px-8 lg:px-12">
-      <div className="mx-auto flex max-w-[1400px] items-center gap-4">
+    <div className="mb-6 px-(--gutter)">
+      <div className="mx-auto flex w-full items-center gap-4">
         <div className="h-9 w-1 shrink-0 bg-[#e50914]/40" />
         <div className="flex flex-col justify-center gap-1.5">
           <Sk className="h-2.5 w-24" />
@@ -30,7 +30,7 @@ export function HeroSkeleton() {
     <>
       {/* Desktop */}
       <section className="relative hidden h-screen overflow-hidden bg-[#010101] lg:block">
-        <div className="absolute inset-x-12 bottom-0 pb-7">
+        <div className="absolute inset-x-(--gutter) bottom-0 pb-7">
           <Sk className="mb-5 h-20 w-[460px]" />
           <Sk className="mb-2 h-4 w-[520px]" />
           <Sk className="mb-5 h-4 w-[380px]" />
@@ -54,7 +54,7 @@ export function HeroSkeleton() {
           className="animate-pulse bg-neutral-900/40"
           style={{ height: "72vh", minHeight: "500px" }}
         />
-        <div className="bg-[#010101] px-5 py-5">
+        <div className="bg-[#010101] px-(--gutter) py-5">
           <Sk className="mb-3 h-3 w-24" />
           <Sk className="mb-4 h-9 w-52" />
           <Sk className="mb-2 h-3 w-full" />
@@ -70,8 +70,8 @@ export function ReelSkeleton() {
   return (
     <div className="py-12 lg:py-16">
       <SectionHeaderSkeleton />
-      <div className="px-5 md:px-8 lg:px-12">
-        <div className="mx-auto max-w-[1400px]">
+      <div className="px-(--gutter)">
+        <div className="mx-auto w-full">
           <div className="flex gap-4 overflow-hidden pb-4 md:gap-5 lg:gap-6">
             {Array.from({ length: 4 }).map((_, i) => (
               <div
@@ -102,8 +102,8 @@ export function GridSkeleton({ count = 12 }: { count?: number }) {
   return (
     <div className="pt-16 pb-12 lg:pt-24 lg:pb-16">
       <SectionHeaderSkeleton />
-      <div className="px-5 md:px-8 lg:px-12">
-        <div className="mx-auto max-w-[1400px]">
+      <div className="px-(--gutter)">
+        <div className="mx-auto w-full">
           <div className="grid grid-cols-3 sm:grid-cols-6">
             {Array.from({ length: count }).map((_, i) => (
               <Sk key={i} className="aspect-[2/3] w-full" />
@@ -120,8 +120,8 @@ export function DetailBodySkeleton() {
   return (
     <>
       {/* Synopsis */}
-      <div className="px-8 py-16 lg:px-12 lg:py-24">
-        <div className="mx-auto max-w-[1400px]">
+      <div className="px-(--gutter) py-16 lg:py-24">
+        <div className="mx-auto w-full">
           <Sk className="mb-6 h-5 w-28" />
           <Sk className="mb-3 h-4 w-full max-w-[75ch]" />
           <Sk className="mb-3 h-4 w-full max-w-[65ch]" />
@@ -130,8 +130,8 @@ export function DetailBodySkeleton() {
       </div>
 
       {/* Cast — lead actor feature + row of portraits */}
-      <div className="px-8 pb-16 pt-16 lg:px-12 lg:pt-20">
-        <div className="mx-auto max-w-[1400px]">
+      <div className="px-(--gutter) pb-16 pt-16 lg:pt-20">
+        <div className="mx-auto w-full">
           <Sk className="mb-8 h-5 w-16" />
           <div className="mb-12 flex flex-col gap-8 md:flex-row">
             <div className="w-1/3 shrink-0 sm:w-1/6">
@@ -161,37 +161,15 @@ export function DetailBodySkeleton() {
 
 /* Matches PersonPageHero: padded header with portrait + facts columns. */
 export function PersonHeroSkeleton() {
-  return (
-    <section className="px-6 pb-16 pt-28 lg:px-12 lg:pb-20 lg:pt-32">
-      <div className="mx-auto max-w-[1400px]">
-        <div className="flex flex-col gap-10 md:flex-row md:gap-14">
-          <div className="w-2/3 shrink-0 sm:w-1/3 lg:w-1/4">
-            <Sk className="aspect-[2/3] w-full" />
-          </div>
-          <div className="flex flex-1 flex-col justify-center gap-4">
-            <Sk className="h-3 w-24" />
-            <Sk className="h-12 w-72 max-w-full" />
-            <Sk className="mt-2 h-4 w-full max-w-[65ch]" />
-            <Sk className="h-4 w-full max-w-[58ch]" />
-            <Sk className="h-4 w-2/3 max-w-[40ch]" />
-            <div className="mt-3 flex gap-8">
-              <Sk className="h-10 w-20" />
-              <Sk className="h-10 w-20" />
-              <Sk className="h-10 w-24" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
+  return <section className="person-dossier" aria-hidden="true"><div className="detail-breadcrumb"><Sk className="h-4 w-28" /></div><div className="person-dossier-layout"><div className="person-portrait-column"><Sk className="person-portrait" /></div><div className="flex flex-col gap-7"><Sk className="h-3 w-32" /><Sk className="h-24 w-3/4" /><Sk className="h-8 w-1/2" /><Sk className="h-48 w-full" /><Sk className="h-20 w-full" /></div></div></section>;
 }
 
 /* Matches SearchClient: centered search bar + poster grid. */
 export function SearchSkeleton() {
   return (
     <div className="min-h-screen bg-[#010101] pt-28 lg:pt-32">
-      <div className="px-5 md:px-8 lg:px-12">
-        <div className="mx-auto max-w-[1400px]">
+      <div className="px-(--gutter)">
+        <div className="mx-auto w-full">
           <div className="w-full max-w-[640px] border-b border-white/15 pb-3">
             <Sk className="h-8 w-64" />
           </div>
@@ -202,8 +180,8 @@ export function SearchSkeleton() {
           </div>
         </div>
       </div>
-      <div className="mt-10 px-5 pb-24 md:px-8 lg:px-12">
-        <div className="mx-auto max-w-[1400px]">
+      <div className="mt-10 px-(--gutter) pb-24">
+        <div className="mx-auto w-full">
           <div className="grid grid-cols-3 sm:grid-cols-6">
             {Array.from({ length: 12 }).map((_, i) => (
               <Sk key={i} className="aspect-[2/3] w-full" />
@@ -219,7 +197,7 @@ export function SearchSkeleton() {
 export function LiveSkeleton() {
   return (
     <div className="min-h-screen bg-[#010101]">
-      <div className="mx-auto flex w-full max-w-[1500px] flex-col items-center gap-6 px-4 pb-12 pt-28 md:flex-row md:items-stretch md:gap-8 md:px-8 md:pb-6 md:pt-8 lg:gap-10 lg:px-12">
+      <div className="flex w-full flex-col items-center gap-6 px-(--gutter) pb-12 pt-28 md:flex-row md:items-stretch md:gap-8 md:pb-6 md:pt-8 lg:gap-10">
         <div className="flex w-full flex-col justify-center md:flex-1">
           <Sk className="aspect-video w-full rounded-2xl" />
         </div>
@@ -227,7 +205,7 @@ export function LiveSkeleton() {
           <Sk className="h-[480px] w-full rounded-[2.2rem]" />
         </div>
       </div>
-      <div className="mx-auto w-full max-w-[1500px] px-4 pb-24 sm:px-8 lg:px-12">
+      <div className="w-full px-(--gutter) pb-24">
         <Sk className="mb-6 h-5 w-40" />
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {Array.from({ length: 10 }).map((_, i) => (
@@ -255,14 +233,5 @@ export function ListingPageSkeleton({ srLabel }: { srLabel: string }) {
 }
 
 export function DetailPageSkeleton({ srLabel }: { srLabel: string }) {
-  return (
-    <div className="min-h-screen bg-[#010101]" aria-busy="true">
-      <span className="sr-only" aria-live="polite">
-        {srLabel}
-      </span>
-      <HeroSkeleton />
-      <DetailBodySkeleton />
-      <GridSkeleton />
-    </div>
-  );
+  return <div className="min-h-screen bg-[#010101]" aria-busy="true"><span className="sr-only" role="status">{srLabel}</span><div className="title-dossier title-dossier--cinematic" aria-hidden="true"><div className="title-dossier-breadcrumb"><Sk className="h-4 w-24" /></div><div className="title-dossier-layout"><Sk className="title-dossier-poster" /><div className="title-dossier-copy w-full gap-6"><Sk className="h-3 w-32" /><Sk className="h-24 w-3/4" /><Sk className="h-5 w-1/2" /><Sk className="h-28 w-3/4" /><Sk className="h-12 w-64 max-w-full" /></div></div></div><DetailBodySkeleton /><GridSkeleton /></div>;
 }

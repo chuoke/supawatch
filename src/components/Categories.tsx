@@ -29,13 +29,13 @@ export default function Categories() {
         title="Action & Thriller"
         fetchUrl="/api/getGenreMixed?id=28"
         variant="portrait"
-        seeAllHref="/movie?genre=28"
+        seeAllHref="/films?genre=28"
       />
       <CategoryRow
         title="Drama"
         fetchUrl="/api/getGenreMixed?id=18"
         variant="portrait"
-        seeAllHref="/movie?genre=18"
+        seeAllHref="/films?genre=18"
       />
     </section>
   );

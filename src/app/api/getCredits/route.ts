@@ -1,6 +1,6 @@
 import { resolveRegion } from "@/lib/geo";
 import { CACHE, jsonErr, jsonFromError, jsonOk, requirePositiveInt, tmdbFetch } from "@/lib/tmdb";
-import { findBestTrailerKey, pickProviderRegion, streamingProviders, type MediaType } from "@/lib/media";
+import { findBestTrailerKey, getMediaBundle, pickProviderRegion, streamingProviders, type MediaType } from "@/lib/media";
 
 type CastCredit = { id: number; name: string; profile_path?: string | null };
 type SeasonSummary = { season_number: number; episode_count: number; name: string };
@@ -36,14 +36,6 @@ function mediaTypeFromParam(value: string | null): MediaType | Response {
   return jsonErr("Invalid type param", 400);
 }
 
-function countriesForTrailer(type: MediaType, data: CreditsPayload): string[] {
-  if (type === "tv") return Array.isArray(data.origin_country) ? data.origin_country : [];
-  if (!Array.isArray(data.production_countries)) return [];
-  return data.production_countries
-    .map((country) => country.iso_3166_1)
-    .filter((country): country is string => typeof country === "string" && /^[A-Z]{2}$/.test(country));
-}
-
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = requirePositiveInt(searchParams.get("id"), "id");
@@ -56,15 +48,7 @@ export async function GET(request: Request) {
 
   try {
     const [data, wpData] = await Promise.all([
-      tmdbFetch<CreditsPayload>(
-        `/${type}/${id}`,
-        {
-          append_to_response: "credits,videos,images",
-          include_image_language: "en,null",
-          include_video_language: "en,null",
-        },
-        { revalidate: CACHE.day },
-      ),
+      getMediaBundle(type, id) as Promise<CreditsPayload>,
       tmdbFetch<{ results?: Record<string, unknown> }>(`/${type}/${id}/watch/providers`, {}, { revalidate: CACHE.day }).catch(() => null),
     ]);
 
@@ -74,13 +58,13 @@ export async function GET(request: Request) {
       profile_path: c.profile_path ?? null,
     }));
 
+    let partial = wpData === null;
     const trailerKey = await findBestTrailerKey(
       type,
       id,
       data.videos?.results ?? [],
       typeof data.original_language === "string" ? data.original_language : null,
-      countriesForTrailer(type, data),
-    );
+    ).catch(() => { partial = true; return null; });
 
     /* Montage frames — textless stills only. Language-tagged backdrops are
        promo key art with the title baked in (they read as posters on
@@ -115,9 +99,9 @@ export async function GET(request: Request) {
       : [];
 
     return jsonOk(
-      { cast, seasons, runtime, vote_average, release_date, first_air_date, seasons_list, trailerKey, provider, backdrops },
+      { cast, seasons, runtime, vote_average, release_date, first_air_date, seasons_list, trailerKey, provider, backdrops, partial },
       200,
-      { sMaxAge: CACHE.day, staleWhileRevalidate: CACHE.day },
+      { sMaxAge: partial ? 0 : CACHE.hour, staleWhileRevalidate: CACHE.day },
     );
   } catch (e) {
     return jsonFromError(e);

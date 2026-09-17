@@ -13,8 +13,8 @@ export default function PersonPhotoGallery({ profiles, name }: Props) {
 
   return (
     <section className="border-b border-white/[0.06] py-14 lg:py-20">
-      <div className="mx-auto max-w-[1400px]">
-        <div className="mb-8 flex items-center gap-5 px-6 lg:px-12">
+      <div className="mx-auto w-full">
+        <div className="mb-8 flex items-center gap-5 px-(--gutter)">
           <span className="shrink-0 font-manrope text-[11px] font-semibold uppercase tracking-[0.25em] text-neutral-400">
             Gallery
           </span>
@@ -24,7 +24,7 @@ export default function PersonPhotoGallery({ profiles, name }: Props) {
           </span>
         </div>
 
-        <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-6 pb-4 scrollbar-hide md:gap-4 lg:px-12">
+        <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto px-(--gutter) pb-4 scrollbar-hide md:gap-4">
           {shots.map((p, i) => (
             <figure
               key={i}
@@ -32,7 +32,7 @@ export default function PersonPhotoGallery({ profiles, name }: Props) {
               style={{ boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)" }}
             >
               <BlurImage
-                src={`https://image.tmdb.org/t/p/w500${p.file_path}`}
+                src={`https://image.tmdb.org/t/p/h632${p.file_path}`}
                 alt={`${name} — ${i + 1}`}
                 className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.04]"
               />

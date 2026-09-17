@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Supawatch",
     short_name: "Supawatch",
-    description: "Explore movies, TV series, trailers, recommendations, and live channels.",
+    description: "Explore films, series, trailers, recommendations, and live channels.",
     start_url: "/",
     display: "standalone",
     background_color: "#010101",

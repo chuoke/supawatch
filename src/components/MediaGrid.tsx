@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { cn } from "@/lib/utils";
 import MovieDetailsModal from "@/components/MovieDetailsModal";
 import TvDetailsModal from "@/components/TvDetailsModal";
-import BlurImage from "@/components/BlurImage";
+import TitleCard from "@/components/discovery/TitleCard";
 import { fetchJson } from "@/lib/client-api";
 import { useInView } from "@/lib/useInView";
 
@@ -78,8 +77,8 @@ export default function MediaGrid({ title, subtitle, fetchUrl, limit = 12, media
     <>
       <div ref={ref} className="snap-section pt-16 pb-12 lg:pt-24 lg:pb-16">
         {/* ── Header ── */}
-        <div className="mb-6 px-5 md:px-8 lg:px-12">
-          <div className="mx-auto flex max-w-[1400px] items-center gap-4">
+        <div className="mb-6 px-(--gutter)">
+          <div className="mx-auto flex w-full items-center gap-4">
             <div className="h-9 w-1 shrink-0 bg-[#e50914]" />
             <div className="flex flex-col justify-center gap-0.5">
               {subtitle && (
@@ -95,9 +94,9 @@ export default function MediaGrid({ title, subtitle, fetchUrl, limit = 12, media
         </div>
 
         {/* ── Grid ── */}
-        <div className="px-5 md:px-8 lg:px-12">
-          <div className="mx-auto max-w-[1400px]">
-            <div className="grid grid-cols-3 sm:grid-cols-6">
+        <div className="px-(--gutter)">
+          <div className="mx-auto w-full">
+            <div className="discovery-grid">
               {loading
                 ? Array.from({ length: limit }).map((_, i) => <SkeletonCard key={i} />)
                 : items.map((item) => (
@@ -146,27 +145,7 @@ export default function MediaGrid({ title, subtitle, fetchUrl, limit = 12, media
 }
 
 function Card({ item, onClick }: { item: GridItem; onClick: () => void }) {
-  const canOpenModal = Boolean(item.backdrop_path);
-
-  return (
-    <div
-      className={cn("group relative aspect-[2/3] w-full overflow-hidden bg-neutral-900", canOpenModal && "cursor-pointer")}
-      onClick={canOpenModal ? onClick : undefined}
-    >
-      {item.poster_path ? (
-        <BlurImage
-          src={`https://image.tmdb.org/t/p/w342${item.poster_path}`}
-          alt={item.title}
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center font-manrope text-[11px] text-neutral-600">
-          {item.title[0]}
-        </div>
-      )}
-      <div className="absolute inset-0 bg-black/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-    </div>
-  );
+  return <TitleCard item={{ ...item, date: item.release_date || item.first_air_date }} onOpen={item.backdrop_path ? onClick : undefined} />;
 }
 
 function SkeletonCard() {

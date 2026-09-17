@@ -9,17 +9,20 @@ export async function GET(request: Request) {
   const page = sanitizePage(searchParams.get("page"));
 
   try {
-    const [movieData, tvData] = await Promise.all([
-      tmdbFetch<{ results?: AnyObj[]; total_pages?: number }>("/discover/movie", { with_genres: id, page, sort_by: "popularity.desc" }).catch(() => ({ results: [], total_pages: 1 })),
-      tmdbFetch<{ results?: AnyObj[]; total_pages?: number }>("/discover/tv", { with_genres: id, page, sort_by: "popularity.desc" }).catch(() => ({ results: [], total_pages: 1 })),
+    const pages = await Promise.allSettled([
+      tmdbFetch<{ results?: AnyObj[]; total_pages?: number }>("/discover/movie", { with_genres: id, page, sort_by: "popularity.desc" }),
+      tmdbFetch<{ results?: AnyObj[]; total_pages?: number }>("/discover/tv", { with_genres: id, page, sort_by: "popularity.desc" }),
     ]);
+    if (pages.every(result => result.status === "rejected")) return jsonErr("Discovery couldn’t load. Please try again.", 503);
+    const partial = pages.some(result => result.status === "rejected");
+    const [movieData, tvData] = pages.map(result => result.status === "fulfilled" ? result.value : { results: [], total_pages: 0 });
 
     const movies = (movieData.results ?? []).map((m) => ({ ...m, media_type: "movie" }));
     const tv = (tvData.results ?? []).map((t) => ({ ...t, media_type: "tv" }));
     const combined = [...movies, ...tv].sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
     const total_pages = Math.max(movieData.total_pages ?? 1, tvData.total_pages ?? 1);
 
-    return jsonOk({ results: combined, total_pages }, 200, { sMaxAge: CACHE.hour });
+    return jsonOk({ results: combined, total_pages, partial }, 200, { sMaxAge: partial ? 0 : CACHE.hour });
   } catch (e) {
     return jsonFromError(e);
   }

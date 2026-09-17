@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import MediaGrid from "@/components/MediaGrid";
-import ShowReel from "@/components/ShowReel";
+import Spotlight from "@/components/Spotlight";
 import { fetchJson } from "@/lib/client-api";
 
 /* ── Regional flavor ───────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ export default function RegionalRows() {
 
   return (
     <>
-      <ShowReel
+      <Spotlight
         title={`Popular in ${name}`}
         subtitle="Trending Near You"
         fetchUrl={`/api/getDiscover?type=mixed&origin_country=${region}&sort_by=popularity.desc`}

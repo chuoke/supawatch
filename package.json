@@ -7,7 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "prune:channels": "node scripts/prune-dead-channels.mjs"
+    "prune:channels": "node scripts/prune-dead-channels.mjs",
+    "test:history": "node scripts/test-history.mjs",
+    "test:discovery": "node scripts/test-discovery.mjs",
+    "test:core": "node scripts/test-core.mjs",
+    "test:tmdb": "node scripts/test-tmdb.mjs",
+    "test:browse": "node scripts/test-browse.mjs",
+    "test:episodes": "node scripts/test-episode-ratings.mjs",
+    "test:feed": "node scripts/test-feed-resilience.mjs"
   },
   "dependencies": {
     "@vercel/analytics": "^1.6.1",
@@ -15,6 +22,7 @@
     "clsx": "^2.1.1",
     "gsap": "^3.15.0",
     "hls.js": "^1.6.16",
+    "lenis": "^1.3.26",
     "lucide-react": "^1.18.0",
     "next": "16.2.9",
     "posthog-js": "^1.396.6",

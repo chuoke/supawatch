@@ -8,9 +8,11 @@ import { cn } from "@/lib/utils";
 
 const navigation = [
   { name: "Home", href: "/" },
-  { name: "Movies", href: "/movie" },
-  { name: "TV", href: "/tv" },
+  { name: "Films", href: "/films" },
+  { name: "Series", href: "/series" },
   { name: "Live TV", href: "/live" },
+  { name: "Collections", href: "/collections" },
+  { name: "My List", href: "/watchlist" },
 ];
 
 export default function Header() {
@@ -30,6 +32,7 @@ export default function Header() {
 
   return (
     <header
+      style={{ viewTransitionName: "persistent-nav" }}
       className={cn(
         "fixed inset-x-0 top-0 z-50 h-[66px] transition-all duration-500",
         scrolled
@@ -37,7 +40,7 @@ export default function Header() {
           : "bg-gradient-to-b from-black/55 to-transparent",
       )}
     >
-      <div className="flex h-full items-center px-12">
+      <div className="flex h-full items-center px-(--gutter)">
         {/* ── Logo + divider + nav ── */}
         <div className="flex items-center">
           <Link href="/" aria-label="Supawatch" className="shrink-0">
@@ -60,6 +63,7 @@ export default function Header() {
                 <Link
                   key={item.name}
                   href={item.href}
+                  aria-current={active ? "page" : undefined}
                   className={cn(
                     "font-manrope text-[15px] tracking-[0.01em] transition-colors duration-200",
                     active
@@ -82,7 +86,7 @@ export default function Header() {
             href="/search"
             aria-label="Search"
             data-intro-chrome
-            className="flex items-center gap-1.5 text-white/40 transition-colors duration-200 hover:text-white/70"
+            className="flex min-h-11 min-w-11 items-center justify-center gap-1.5 text-white/50 transition-colors duration-200 hover:text-white/80"
           >
             <Search className="h-[14px] w-[14px]" />
             <span className="hidden font-manrope text-[15px] font-medium tracking-[0.01em] lg:inline">

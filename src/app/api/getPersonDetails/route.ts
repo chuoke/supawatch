@@ -1,4 +1,5 @@
-import { CACHE, jsonFromError, jsonOk, requirePositiveInt, tmdbFetch } from "@/lib/tmdb";
+import { getPerson } from "@/lib/person";
+import { CACHE, jsonFromError, jsonOk, requirePositiveInt } from "@/lib/tmdb";
 
 type PersonCredit = {
   media_type?: string;
@@ -20,11 +21,12 @@ export async function GET(request: Request) {
   if (id instanceof Response) return id;
 
   try {
-    const [person, credits, images] = await Promise.all([
-      tmdbFetch(`/person/${id}`, {}, { revalidate: CACHE.hour }),
-      tmdbFetch<PersonCredits>(`/person/${id}/combined_credits`, {}, { revalidate: CACHE.hour }),
-      tmdbFetch<PersonImages>(`/person/${id}/images`, {}, { revalidate: CACHE.day }),
-    ]);
+    const data = await getPerson(id);
+    const credits: PersonCredits = data.combined_credits ?? {};
+    const images: PersonImages = data.images ?? {};
+    const person = { ...data };
+    delete person.combined_credits;
+    delete person.images;
 
     const knownFor = [...(credits.cast ?? []), ...(credits.crew ?? [])]
       .filter((item) => item.media_type === "movie" || item.media_type === "tv")
