@@ -1,16 +1,6 @@
 import type { MetadataRoute } from "next";
 import { APP_NAME } from "@/lib/app-name";
-
-const icon = process.env.NEXT_PUBLIC_PWA_ICON?.trim() || "/favicon.ico";
-const iconExtension = icon.split(/[?#]/, 1)[0].split(".").pop()?.toLowerCase();
-const iconType = {
-  png: "image/png",
-  svg: "image/svg+xml",
-  webp: "image/webp",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  ico: "image/x-icon",
-}[iconExtension ?? ""];
+import { APP_ICON, APP_ICON_TYPE } from "@/lib/app-icon";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -23,9 +13,9 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#010101",
     icons: [
       {
-        src: icon,
+        src: APP_ICON,
         sizes: "any",
-        ...(iconType ? { type: iconType } : {}),
+        ...(APP_ICON_TYPE ? { type: APP_ICON_TYPE } : {}),
       },
     ],
   };

@@ -11,6 +11,7 @@ import IntroSplash from "@/components/IntroSplash";
 import JsonLd from "@/components/JsonLd";
 import RouteTransition from "@/components/RouteTransition";
 import { APP_NAME } from "@/lib/app-name";
+import { APP_ICON, APP_ICON_TYPE } from "@/lib/app-icon";
 
 const mdNichrome = localFont({
   src: [
@@ -74,6 +75,14 @@ export const metadata: Metadata = {
   authors: [{ name: APP_NAME }],
   creator: APP_NAME,
   applicationName: APP_NAME,
+  icons: {
+    icon: [
+      {
+        url: APP_ICON,
+        ...(APP_ICON_TYPE ? { type: APP_ICON_TYPE } : {}),
+      },
+    ],
+  },
   metadataBase: new URL(siteUrl),
   manifest: "/manifest.webmanifest",
   robots: {
