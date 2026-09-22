@@ -1,0 +1,10 @@
+.git
+.next
+node_modules
+.env
+.env.*
+!.env.example
+playlist-backups
+npm-debug.log*
+Dockerfile
+docker-compose.yml

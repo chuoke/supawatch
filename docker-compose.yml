@@ -1,0 +1,25 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:?Set NEXT_PUBLIC_BASE_URL in your environment or .env file}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Supawatch}
+        NEXT_PUBLIC_PWA_ICON: ${NEXT_PUBLIC_PWA_ICON:-/logo.ico}
+        NEXT_PUBLIC_SOCIAL_IMAGE: ${NEXT_PUBLIC_SOCIAL_IMAGE:-/images/space_odyssey_bg.png}
+      secrets:
+        - source: tmdb_read_access_token
+          target: tmdb_read_access_token
+    environment:
+      TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN:?Set TMDB_READ_ACCESS_TOKEN in your environment or .env file}
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:?Set NEXT_PUBLIC_BASE_URL in your environment or .env file}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Supawatch}
+      NEXT_PUBLIC_PWA_ICON: ${NEXT_PUBLIC_PWA_ICON:-/logo.ico}
+      NEXT_PUBLIC_SOCIAL_IMAGE: ${NEXT_PUBLIC_SOCIAL_IMAGE:-/images/space_odyssey_bg.png}
+    ports:
+      - "${PORT:-3000}:3000"
+    restart: unless-stopped
+
+secrets:
+  tmdb_read_access_token:
+    environment: TMDB_READ_ACCESS_TOKEN
